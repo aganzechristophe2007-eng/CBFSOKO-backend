@@ -1,0 +1,299 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String         @id @default(cuid())
+  name             String
+  email            String         @unique
+  password         String
+  phone            String?
+  avatar           String?
+  role             Role           @default(USER)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  cartItems        CartItem[]
+  favorites        Favorite[]
+  feedbacks        Feedback[]
+  following        Follow[]       @relation("Followers")
+  followers        Follow[]       @relation("Following")
+  receivedMessages Message[]      @relation("ReceivedMessages")
+  sentMessages     Message[]      @relation("SentMessages")
+  notifications    Notification[]
+  orders           Order[]        @relation("BuyerOrders")
+  products         Product[]      @relation("SellerProducts")
+  reels            Reel[]
+  reelComments     ReelComment[]
+  shop             Shop?
+  transactions     Transaction[]
+  wallet           Wallet?
+
+  @@index([email])
+}
+
+model Shop {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  logo        String?
+  verified    Boolean  @default(false)
+  ownerId     String   @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+}
+
+model Category {
+  id          String     @id @default(cuid())
+  name        String     @unique
+  slug        String     @unique
+  description String?
+  icon        String?
+  imageBanner String?
+  isActive    Boolean    @default(true)
+  order       Int        @default(0)
+  parentId    String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  parent      Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children    Category[] @relation("CategoryHierarchy")
+  products    Product[]
+
+  @@index([parentId])
+  @@index([slug])
+}
+
+model Product {
+  id             String       @id @default(cuid())
+  title          String
+  description    String
+  priceUSD       Float        @default(0)
+  priceCDF       Float        @default(0)
+  quantity       Int          @default(1)
+  state          ProductState @default(NEUF)
+  type           ProductType  @default(SALE)
+  images         String[]     @default([])
+  videoUrl       String?
+  qrCodeUrl      String?
+  location       String?
+  isSold         Boolean      @default(false)
+  favoritesCount Int          @default(0)
+  viewsCount     Int          @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  categoryId     String
+  sellerId       String
+  weight         Float?
+  cartItems      CartItem[]
+  favorites      Favorite[]
+  orderItems     OrderItem[]
+  category       Category     @relation(fields: [categoryId], references: [id])
+  seller         User         @relation("SellerProducts", fields: [sellerId], references: [id], onDelete: Cascade)
+  reel           Reel?
+  reelViews      ReelView[]
+  reelComments   ReelComment[]
+
+  @@index([categoryId])
+  @@index([sellerId])
+  @@index([type])
+  @@index([isSold])
+}
+
+model Favorite {
+  id        String   @id @default(cuid())
+  userId    String
+  productId String
+  createdAt DateTime @default(now())
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId])
+  @@index([productId])
+}
+
+model CartItem {
+  id        String   @id @default(cuid())
+  userId    String
+  productId String
+  quantity  Int      @default(1)
+  createdAt DateTime @default(now())
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId])
+}
+
+model Order {
+  id              String      @id @default(cuid())
+  buyerId         String
+  totalUSD        Float       @default(0)
+  totalCDF        Float       @default(0)
+  status          OrderStatus @default(PENDING)
+  deliveryAddress String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  buyer           User        @relation("BuyerOrders", fields: [buyerId], references: [id])
+  items           OrderItem[]
+
+  @@index([buyerId])
+}
+
+model OrderItem {
+  id        String  @id @default(cuid())
+  orderId   String
+  productId String
+  quantity  Int     @default(1)
+  priceUSD  Float
+  priceCDF  Float
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id])
+}
+
+model Reel {
+  id        String   @id @default(cuid())
+  videoUrl  String
+  thumbnail String?
+  caption   String?
+  productId String?  @unique
+  sellerId  String
+  createdAt DateTime @default(now())
+  product   Product? @relation(fields: [productId], references: [id])
+  seller    User     @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+}
+
+// Une vue par identitÃ© (utilisateur connectÃ© OU visiteur anonyme) et par jour, pour un reel donnÃ©.
+// On s'appuie sur Product (et non sur le modÃ¨le Reel) car c'est Product.id qui identifie
+// rÃ©ellement un reel cÃ´tÃ© frontend (Home.tsx construit les reels Ã  partir des produits avec videoUrl).
+model ReelView {
+  id          String   @id @default(cuid())
+  productId   String
+  identityKey String // "user:<userId>" ou "visitor:<visitorId>"
+  day         String // "YYYY-MM-DD" (UTC) : sert de fenÃªtre d'unicitÃ© quotidienne
+  createdAt   DateTime @default(now())
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, identityKey, day])
+  @@index([productId])
+}
+
+model ReelComment {
+  id        String   @id @default(cuid())
+  productId String
+  userId    String
+  content   String
+  createdAt DateTime @default(now())
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([productId, createdAt])
+  @@index([userId])
+}
+
+model Message {
+  id         String   @id @default(cuid())
+  senderId   String
+  receiverId String
+  content    String
+  isRead     Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  receiver   User     @relation("ReceivedMessages", fields: [receiverId], references: [id], onDelete: Cascade)
+  sender     User     @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([receiverId, isRead])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+}
+
+model Follow {
+  id          String   @id @default(cuid())
+  followerId  String
+  followingId String
+  createdAt   DateTime @default(now())
+  follower    User     @relation("Followers", fields: [followerId], references: [id], onDelete: Cascade)
+  following   User     @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+}
+
+model Wallet {
+  id         String   @id @default(cuid())
+  userId     String   @unique
+  balanceUSD Float    @default(0)
+  balanceCDF Float    @default(0)
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Transaction {
+  id        String            @id @default(cuid())
+  userId    String
+  type      TransactionType
+  amount    Float
+  currency  String            @default("USD")
+  status    TransactionStatus @default(PENDING)
+  reference String?
+  createdAt DateTime          @default(now())
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Feedback {
+  id        String   @id @default(cuid())
+  userId    String?
+  message   String
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id])
+}
+
+enum Role {
+  USER
+  ADMIN
+  ADMIN_FINANCE
+  SUPER_ADMIN
+}
+
+enum ProductType {
+  SALE
+  REQUEST
+}
+
+enum ProductState {
+  NEUF
+  OCCASION_BON_ETAT
+  OCCASION_MOYEN
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  PAYMENT
+  REFUND
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
