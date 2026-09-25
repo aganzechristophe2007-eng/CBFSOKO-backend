@@ -1,8 +1,9 @@
 import 'dotenv/config';
+import { rateLimit, ipKeyGenerator } from 'express-rate-limit';
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
+
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
@@ -569,7 +570,8 @@ const commentWriteLimiter = rateLimit({
   legacyHeaders: false,
   // 🔒 Limite par utilisateur connecté (route protégée par requireAuth en amont) et non par IP,
   // pour ne pas pénaliser tout un réseau partagé (fréquent à Bukavu).
-  keyGenerator: (req: Request) => (req as AuthRequest).user?.id || req.ip || 'anonyme',
+ keyGenerator: (req) => ipKeyGenerator(req.ip || ''),
+
   message: { success: false, error: 'Trop de commentaires envoyés. Réessaie dans un instant.' },
 });
 
