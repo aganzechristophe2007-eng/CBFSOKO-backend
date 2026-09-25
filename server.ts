@@ -309,7 +309,15 @@ app.get('/api/auth/me', requireAuth, async (req: AuthRequest, res: Response) => 
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.user!.id },
-      select: { id: true, name: true, email: true, phone: true, avatar: true, balance: true, role: true },
+      select: {
+  id: true,
+  name: true,
+  email: true,
+  phone: true,
+  avatar: true,
+  role: true
+},
+
     });
     if (!user) return res.status(401).json({ error: 'Utilisateur introuvable.' });
     return res.status(200).json({ success: true, user });
