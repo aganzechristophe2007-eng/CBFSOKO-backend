@@ -15,10 +15,10 @@ const isProd = process.env.NODE_ENV === 'production';
 // Frontend et backend sur des domaines différents (ex: Vercel + Render) -> COOKIE_SAMESITE=none
 const sameSite = (process.env.COOKIE_SAMESITE as 'strict' | 'lax' | 'none') || 'strict';
 
-const baseCookie: CookieOptions = {
+const baseCookie = {
   httpOnly: true,
-  secure: isProd || sameSite === 'none',
-  sameSite,
+  secure: true,
+  sameSite: 'none' as const,
   path: '/',
 };
 
@@ -78,7 +78,10 @@ const fail = (res: Response, status: number, msg: string) =>
 
 const issueSession = (res: Response, userId: string) => {
   const token = jwt.sign({ id: userId }, JWT_SECRET, { expiresIn: TOKEN_TTL_SECONDS, algorithm: 'HS256' });
-  res.cookie('token', token, { ...baseCookie, maxAge: TOKEN_TTL_SECONDS * 1000 });
+  res.cookie('token', token, {
+  ...baseCookie,
+  maxAge: TOKEN_TTL_SECONDS * 1000,
+});
 };
 
 // ==========================================

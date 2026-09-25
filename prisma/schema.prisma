@@ -10,6 +10,8 @@ datasource db {
 model User {
   id               String         @id @default(cuid())
   name             String
+  callsMade        Call[]         @relation("CallsMade")
+  callsReceived    Call[]         @relation("CallsReceived")
   email            String         @unique
   password         String
   phone            String?
@@ -194,18 +196,6 @@ model ReelComment {
   @@index([userId])
 }
 
-model Message {
-  id         String   @id @default(cuid())
-  senderId   String
-  receiverId String
-  content    String
-  isRead     Boolean  @default(false)
-  createdAt  DateTime @default(now())
-  receiver   User     @relation("ReceivedMessages", fields: [receiverId], references: [id], onDelete: Cascade)
-  sender     User     @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
-
-  @@index([receiverId, isRead])
-}
 
 model Notification {
   id        String   @id @default(cuid())
@@ -217,6 +207,58 @@ model Notification {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, isRead])
+}
+model Message {
+  id            String      @id @default(cuid())
+  senderId      String
+  receiverId    String
+  type          MessageType @default(TEXT)
+  content       String? // texte du message, ou légende optionnelle pour un média
+  mediaUrl      String? // URL sécurisée Cloudinary (image, audio ou vidéo)
+  mediaPublicId String? // public_id Cloudinary, nécessaire pour une suppression future
+  mediaDuration Int? // durée en secondes (audio/vidéo)
+  isRead        Boolean     @default(false)
+  readAt        DateTime?
+  createdAt     DateTime    @default(now())
+  receiver      User        @relation("ReceivedMessages", fields: [receiverId], references: [id], onDelete: Cascade)
+  sender        User        @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([receiverId, isRead])
+  @@index([senderId, receiverId, createdAt])
+  @@index([receiverId, senderId, createdAt])
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  AUDIO
+  VIDEO
+}
+
+model Call {
+  id         String     @id @default(cuid())
+  callerId   String
+  receiverId String
+  type       CallType
+  status     CallStatus @default(MISSED)
+  duration   Int        @default(0)
+  createdAt  DateTime   @default(now())
+  caller     User       @relation("CallsMade", fields: [callerId], references: [id], onDelete: Cascade)
+  receiver   User       @relation("CallsReceived", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@index([callerId, createdAt])
+  @@index([receiverId, createdAt])
+}
+
+enum CallType {
+  AUDIO
+  VIDEO
+}
+
+enum CallStatus {
+  MISSED
+  ANSWERED
+  DECLINED
 }
 
 model Follow {

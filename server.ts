@@ -3,7 +3,6 @@ import { rateLimit, ipKeyGenerator } from 'express-rate-limit';
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
@@ -174,10 +173,10 @@ const clearProductsCache = () => {
 // ==========================================
 const setTokenCookie = (res: Response, token: string) => {
   res.cookie('token', token, {
-    httpOnly: true, // Empêche le JS côté client d'accéder au token (protection XSS)
-    secure: process.env.NODE_ENV === 'production', // HTTPS obligatoire en production
-    sameSite: 'strict', // Protection CSRF
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 jours
+    httpOnly: true,
+    secure: true,
+    sameSite: 'none',
+    maxAge: 30 * 24 * 60 * 60 * 1000,
     path: '/',
   });
 };
