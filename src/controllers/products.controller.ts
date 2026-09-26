@@ -149,6 +149,128 @@ export const getProducts = async (
 };
 
 // ==========================================
+// GET PRODUCT BY ID (fiche produit)
+// ==========================================
+
+export const getProductById = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  try {
+    const { id } = req.params;
+
+    // Sécurité : on valide la forme de l'id avant toute requête DB
+    // (évite d'exposer Prisma à des entrées arbitraires/longues).
+    if (!id || typeof id !== 'string' || id.length > 40) {
+      return res.status(400).json({ success: false, error: 'Identifiant invalide.' });
+    }
+
+    const product = await prisma.product.findUnique({
+      where: { id },
+      include: {
+        category: true,
+        seller: {
+          select: { id: true, name: true, avatar: true }, // jamais email/password
+        },
+      },
+    });
+
+    if (!product) {
+      return res.status(404).json({ success: false, error: 'Produit introuvable.' });
+    }
+
+    const [ratingAgg, similar] = await Promise.all([
+      prisma.sellerReview.aggregate({
+        where: { sellerId: product.sellerId },
+        _avg: { rating: true },
+        _count: { rating: true },
+      }),
+      prisma.product.findMany({
+        where: { categoryId: product.categoryId, id: { not: product.id }, isSold: false },
+        select: { id: true, title: true, priceUSD: true, priceCDF: true, images: true },
+        take: 4,
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        ...product,
+        seller: product.seller
+          ? {
+              ...product.seller,
+              ratingAvg: ratingAgg._avg.rating ?? 0,
+              ratingCount: ratingAgg._count.rating,
+            }
+          : null,
+        similar,
+      },
+    });
+  } catch (error: any) {
+    console.error('Erreur getProductById:', error);
+    return res.status(500).json({ success: false, error: 'Erreur serveur.' });
+  }
+};
+
+// ==========================================
+// NOTER UN VENDEUR (étoiles)
+// ==========================================
+// Sécurité : une note ne peut être créée que par l'acheteur d'une commande
+// LIVRÉE contenant un article de ce vendeur. Une seule note par commande
+// (contrainte @unique sur orderId côté schema.prisma) => pas de spam/farming.
+
+export const createSellerReview = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  try {
+    const buyerId = req.user!.id;
+    const { id: productId } = req.params;
+    const { orderId, rating, comment } = req.body;
+
+    const ratingNum = Number(rating);
+    if (!orderId || typeof orderId !== 'string') {
+      return res.status(400).json({ success: false, error: 'orderId requis.' });
+    }
+    if (!Number.isInteger(ratingNum) || ratingNum < 1 || ratingNum > 5) {
+      return res.status(400).json({ success: false, error: 'Note invalide (1 à 5).' });
+    }
+    const safeComment = typeof comment === 'string' ? comment.trim().slice(0, 500) : undefined;
+
+    const product = await prisma.product.findUnique({ where: { id: productId }, select: { sellerId: true } });
+    if (!product) return res.status(404).json({ success: false, error: 'Produit introuvable.' });
+    if (product.sellerId === buyerId) {
+      return res.status(403).json({ success: false, error: 'Vous ne pouvez pas vous noter vous-même.' });
+    }
+
+    const order = await prisma.order.findFirst({
+      where: {
+        id: orderId,
+        buyerId, // la commande doit appartenir à l'utilisateur authentifié
+        status: 'DELIVERED',
+        items: { some: { product: { sellerId: product.sellerId } } },
+      },
+      select: { id: true },
+    });
+    if (!order) {
+      return res.status(403).json({ success: false, error: "Aucune commande livrée de ce vendeur ne vous appartient." });
+    }
+
+    const review = await prisma.sellerReview.upsert({
+      where: { orderId },
+      update: { rating: ratingNum, comment: safeComment },
+      create: { sellerId: product.sellerId, buyerId, orderId, rating: ratingNum, comment: safeComment },
+    });
+
+    return res.status(201).json({ success: true, data: review });
+  } catch (error: any) {
+    console.error('Erreur createSellerReview:', error);
+    return res.status(500).json({ success: false, error: 'Erreur serveur.' });
+  }
+};
+
+// ==========================================
 // CREATE PRODUCT
 // ==========================================
 

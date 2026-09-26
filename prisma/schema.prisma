@@ -31,6 +31,8 @@ model User {
   products         Product[]      @relation("SellerProducts")
   reels            Reel[]
   reelComments     ReelComment[]
+  sellerReviewsReceived SellerReview[] @relation("SellerReviewsReceived")
+  sellerReviewsGiven    SellerReview[] @relation("SellerReviewsGiven")
   shop             Shop?
   transactions     Transaction[]
   wallet           Wallet?
@@ -141,8 +143,27 @@ model Order {
   updatedAt       DateTime    @updatedAt
   buyer           User        @relation("BuyerOrders", fields: [buyerId], references: [id])
   items           OrderItem[]
+  review          SellerReview?
 
   @@index([buyerId])
+}
+
+// Note du vendeur laissÃ©e par un acheteur. CrÃ©Ã©e uniquement cÃ´tÃ© serveur
+// aprÃ¨s vÃ©rification qu'une commande LIVRÃ‰E existe entre l'acheteur et ce
+// vendeur (voir createSellerReview) : impossible de noter sans avoir achetÃ©.
+model SellerReview {
+  id        String   @id @default(cuid())
+  sellerId  String
+  buyerId   String
+  orderId   String   @unique
+  rating    Int // 1 Ã  5, validÃ© cÃ´tÃ© serveur
+  comment   String?
+  createdAt DateTime @default(now())
+  seller    User     @relation("SellerReviewsReceived", fields: [sellerId], references: [id], onDelete: Cascade)
+  buyer     User     @relation("SellerReviewsGiven", fields: [buyerId], references: [id], onDelete: Cascade)
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([sellerId])
 }
 
 model OrderItem {
@@ -168,14 +189,14 @@ model Reel {
   seller    User     @relation(fields: [sellerId], references: [id], onDelete: Cascade)
 }
 
-// Une vue par identitÃ© (utilisateur connectÃ© OU visiteur anonyme) et par jour, pour un reel donnÃ©.
-// On s'appuie sur Product (et non sur le modÃ¨le Reel) car c'est Product.id qui identifie
-// rÃ©ellement un reel cÃ´tÃ© frontend (Home.tsx construit les reels Ã  partir des produits avec videoUrl).
+// Une vue par identitÃƒÂ© (utilisateur connectÃƒÂ© OU visiteur anonyme) et par jour, pour un reel donnÃƒÂ©.
+// On s'appuie sur Product (et non sur le modÃƒÂ¨le Reel) car c'est Product.id qui identifie
+// rÃƒÂ©ellement un reel cÃƒÂ´tÃƒÂ© frontend (Home.tsx construit les reels ÃƒÂ  partir des produits avec videoUrl).
 model ReelView {
   id          String   @id @default(cuid())
   productId   String
   identityKey String // "user:<userId>" ou "visitor:<visitorId>"
-  day         String // "YYYY-MM-DD" (UTC) : sert de fenÃªtre d'unicitÃ© quotidienne
+  day         String // "YYYY-MM-DD" (UTC) : sert de fenÃƒÂªtre d'unicitÃƒÂ© quotidienne
   createdAt   DateTime @default(now())
   product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
 
@@ -213,10 +234,10 @@ model Message {
   senderId      String
   receiverId    String
   type          MessageType @default(TEXT)
-  content       String? // texte du message, ou légende optionnelle pour un média
-  mediaUrl      String? // URL sécurisée Cloudinary (image, audio ou vidéo)
-  mediaPublicId String? // public_id Cloudinary, nécessaire pour une suppression future
-  mediaDuration Int? // durée en secondes (audio/vidéo)
+  content       String? // texte du message, ou lÃ©gende optionnelle pour un mÃ©dia
+  mediaUrl      String? // URL sÃ©curisÃ©e Cloudinary (image, audio ou vidÃ©o)
+  mediaPublicId String? // public_id Cloudinary, nÃ©cessaire pour une suppression future
+  mediaDuration Int? // durÃ©e en secondes (audio/vidÃ©o)
   isRead        Boolean     @default(false)
   readAt        DateTime?
   createdAt     DateTime    @default(now())

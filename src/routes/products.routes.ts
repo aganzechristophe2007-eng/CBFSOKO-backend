@@ -1,9 +1,15 @@
 import { Router } from 'express';
 import upload from '../middleware/upload';
-import { createProduct, analyzeProductImages } from '../controllers/products.controller';
+import { createProduct, analyzeProductImages, getProductById, createSellerReview } from '../controllers/products.controller';
 import { requireAuth } from '../middleware/auth.middleware';
 
 const router = Router();
+
+// Fiche produit publique (aucune donnée sensible du vendeur n'est renvoyée)
+router.get('/:id', getProductById);
+
+// Noter le vendeur : réservé aux acheteurs, vérifié côté serveur (commande livrée)
+router.post('/:id/reviews', requireAuth, createSellerReview);
 
 // Route POST sécurisée pour la publication d'un article avec ses fichiers
 router.post(
