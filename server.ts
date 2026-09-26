@@ -301,7 +301,7 @@ app.post('/api/auth/login', authLimiter, async (req: Request, res: Response) => 
 });
 
 app.post('/api/auth/logout', (_req: Request, res: Response) => {
-  res.clearCookie('token', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', path: '/' });
+  res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'none', path: '/' });
   return res.status(200).json({ success: true, message: 'Déconnexion réussie.' });
 });
 
