@@ -225,8 +225,14 @@ export const createSellerReview = async (
   res: Response
 ): Promise<Response> => {
   try {
-    const buyerId = req.user!.id;
-    const { id: productId } = req.params;
+    // Même convention que createProduct : le user vient du token, sans cast global.
+    const authUser = (req as any).user;
+    const buyerId: string | undefined = authUser?.userId || authUser?.id;
+    if (!buyerId) {
+      return res.status(401).json({ success: false, error: 'Non autorisé.' });
+    }
+
+    const productId = String(req.params.id);
     const { orderId, rating, comment } = req.body;
 
     const ratingNum = Number(rating);
