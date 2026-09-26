@@ -238,6 +238,34 @@ app.get('/api/categories', async (_req: Request, res: Response) => {
 });
 
 // ==========================================
+// 0bis. TAUX DE CHANGE USD -> CDF (mis en cache 6h, taux de secours si l'API tombe)
+// ==========================================
+app.get('/api/exchange-rate', async (_req: Request, res: Response) => {
+  try {
+    const cached = getCached<{ rate: number; updatedAt: string }>('exchange-rate:USD-CDF');
+    if (cached) {
+      res.set('Cache-Control', 'public, max-age=3600');
+      return res.status(200).json({ success: true, ...cached });
+    }
+
+    const response = await fetch('https://open.er-api.com/v6/latest/USD');
+    const data: any = await response.json();
+    const rate = data?.rates?.CDF;
+    if (typeof rate !== 'number' || !rate) throw new Error('Taux CDF absent de la réponse.');
+
+    const payload = { rate, updatedAt: new Date().toISOString() };
+    setCached('exchange-rate:USD-CDF', payload, 6 * 60 * 60 * 1000); // 6h : suffisant, évite de solliciter l'API à chaque frappe
+    res.set('Cache-Control', 'public, max-age=3600');
+    return res.status(200).json({ success: true, ...payload });
+  } catch (error) {
+    console.error('Erreur /api/exchange-rate :', error);
+    // ⚠️ Taux de secours si l'API externe est indisponible. À ajuster périodiquement
+    // (le CDF a fluctué entre ~2100 et ~2320 pour 1 USD sur l'année 2026).
+    return res.status(200).json({ success: true, rate: 2300, updatedAt: null, fallback: true });
+  }
+});
+
+// ==========================================
 // 1. AUTHENTIFICATION
 // ==========================================
 app.post('/api/auth/register', authLimiter, async (req: Request, res: Response) => {
