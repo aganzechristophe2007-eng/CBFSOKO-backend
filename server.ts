@@ -19,6 +19,8 @@ import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import http from 'http';
 import { initSocket } from './src/services/socket.service';
+// ⚠️ Adapte ce chemin si ton fichier cloudinary.ts n'est pas dans src/config/
+import cloudinary from './src/config/cloudinary';
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
@@ -94,41 +96,63 @@ const upload = multer({
   },
 });
 
+// 🌩️ Stockage définitif sur Cloudinary : Render (plan gratuit) efface le disque local
+// à chaque redéploiement/redémarrage, donc plus aucun fichier "définitif" n'est écrit
+// sur le disque du serveur. Le disque local ne sert plus que d'espace de travail
+// temporaire pour la compression vidéo (voir saveVideo), et est nettoyé juste après.
+const uploadBufferToCloudinary = (
+  buffer: Buffer,
+  folder: string,
+  resourceType: 'image' | 'video' = 'image'
+): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      { resource_type: resourceType, folder },
+      (error, result) => {
+        if (error) return reject(new Error(`Erreur Cloudinary: ${error.message}`));
+        if (!result) return reject(new Error('Échec de la réponse Cloudinary'));
+        resolve(result.secure_url);
+      }
+    );
+    uploadStream.end(buffer);
+  });
+};
+
 const saveImage = async (buffer: Buffer): Promise<string> => {
-  const filename = `${crypto.randomUUID()}.webp`;
-  const outputPath = path.join(IMAGES_DIR, filename);
-  await sharp(buffer)
+  const compressed = await sharp(buffer)
     .resize({ width: 1200, height: 1200, fit: 'inside', withoutEnlargement: true })
     .webp({ quality: 78 })
-    .toFile(outputPath);
-  return `uploads/images/${filename}`;
+    .toBuffer();
+  return uploadBufferToCloudinary(compressed, 'cbfsoko/images', 'image');
 };
 
 // Recadrée en carré et allégée en webp, comme les photos produit : évite de stocker
 // de grosses photos de profil telles quelles.
 const saveAvatar = async (buffer: Buffer): Promise<string> => {
-  const filename = `${crypto.randomUUID()}.webp`;
-  const outputPath = path.join(AVATARS_DIR, filename);
-  await sharp(buffer)
+  const compressed = await sharp(buffer)
     .rotate()
     .resize({ width: 400, height: 400, fit: 'cover' })
     .webp({ quality: 82 })
-    .toFile(outputPath);
-  return `uploads/avatars/${filename}`;
+    .toBuffer();
+  return uploadBufferToCloudinary(compressed, 'cbfsoko/avatars', 'image');
 };
 
 // 🔇 Compression silencieuse : au-delà de 5 Mo on réduit discrètement la qualité,
 // en dessous on standardise juste le format (aucun message affiché au client dans les deux cas).
+// ffmpeg a besoin de fichiers sur disque pour travailler : on écrit donc dans VIDEOS_DIR
+// à titre de brouillon temporaire, on envoie le résultat compressé à Cloudinary, puis on
+// supprime les deux fichiers locaux (rien n'y reste stocké durablement).
 const saveVideo = (buffer: Buffer): Promise<string> => {
   return new Promise((resolve, reject) => {
     const tmpInput = path.join(VIDEOS_DIR, `${crypto.randomUUID()}.tmp`);
-    const filename = `${crypto.randomUUID()}.mp4`;
-    const outputPath = path.join(VIDEOS_DIR, filename);
+    const tmpOutputName = `${crypto.randomUUID()}.mp4`;
+    const tmpOutputPath = path.join(VIDEOS_DIR, tmpOutputName);
     fs.writeFileSync(tmpInput, buffer);
 
     const needsCompression = buffer.length > VIDEO_COMPRESS_THRESHOLD;
     const cleanup = () => {
       if (fs.existsSync(tmpInput)) fs.unlinkSync(tmpInput);
+      if (fs.existsSync(tmpOutputPath)) fs.unlinkSync(tmpOutputPath);
     };
 
     let command = ffmpeg(tmpInput)
@@ -145,11 +169,18 @@ const saveVideo = (buffer: Buffer): Promise<string> => {
         cleanup();
         reject(new Error(`Erreur de traitement vidéo: ${err.message}`));
       })
-      .on('end', () => {
-        cleanup();
-        resolve(`uploads/videos/${filename}`);
+      .on('end', async () => {
+        try {
+          const compressedBuffer = fs.readFileSync(tmpOutputPath);
+          const secureUrl = await uploadBufferToCloudinary(compressedBuffer, 'cbfsoko/videos', 'video');
+          cleanup();
+          resolve(secureUrl);
+        } catch (uploadErr: any) {
+          cleanup();
+          reject(new Error(`Erreur upload Cloudinary vidéo: ${uploadErr.message}`));
+        }
       })
-      .save(outputPath);
+      .save(tmpOutputPath);
   });
 };
 
