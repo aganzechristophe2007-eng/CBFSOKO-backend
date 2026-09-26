@@ -17,6 +17,8 @@ import crypto from 'crypto';
 import ffmpeg from 'fluent-ffmpeg';
 // @ts-ignore - pas de types officiels, le binaire ffmpeg est embarqué par ce paquet
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
+import http from 'http';
+import { initSocket } from './services/socket.service';
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
@@ -1349,6 +1351,11 @@ if (process.env.NODE_ENV !== 'production') {
   setInterval(() => { prisma.$queryRaw`SELECT 1`.catch(() => undefined); }, 4 * 60 * 1000);
 }
 
-app.listen(PORT, () => {
+// 🔌 Un seul serveur HTTP pour Express ET Socket.io : sans ça, /socket.io/
+// n'existe nulle part et toute tentative de connexion échoue en 404.
+const httpServer = http.createServer(app);
+initSocket(httpServer);
+
+httpServer.listen(PORT, () => {
   console.log(`🚀 Serveur backend opérationnel sur le port ${PORT}`);
 });
