@@ -18,7 +18,7 @@ import ffmpeg from 'fluent-ffmpeg';
 // @ts-ignore - pas de types officiels, le binaire ffmpeg est embarqué par ce paquet
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import http from 'http';
-import { initSocket } from './services/socket.service';
+import { initSocket } from './src/services/socket.service';
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
