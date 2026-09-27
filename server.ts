@@ -420,7 +420,7 @@ app.get('/api/users/:id/profile', async (req: Request, res: Response) => {
     });
     if (!user) return res.status(404).json({ success: false, message: 'Utilisateur introuvable' });
 
-    const [productsCount, ratingAgg, categoryGroups] = await Promise.all([
+    const [productsCount, ratingAgg, categoryGroups, products] = await Promise.all([
       prisma.product.count({ where: { sellerId: id } }),
       prisma.sellerReview.aggregate({ where: { sellerId: id }, _avg: { rating: true }, _count: { rating: true } }),
       prisma.product.groupBy({
@@ -429,6 +429,12 @@ app.get('/api/users/:id/profile', async (req: Request, res: Response) => {
         _count: { categoryId: true },
         orderBy: { _count: { categoryId: 'desc' } },
         take: 1,
+      }),
+      // Tous les produits publiés par ce vendeur (grille façon TikTok sur la page profil).
+      prisma.product.findMany({
+        where: { sellerId: id },
+        select: { id: true, title: true, images: true, priceUSD: true, priceCDF: true, isSold: true, createdAt: true },
+        orderBy: { createdAt: 'desc' },
       }),
     ]);
 
@@ -453,6 +459,7 @@ app.get('/api/users/:id/profile', async (req: Request, res: Response) => {
         averageRating: ratingAgg._avg?.rating ?? null,
         reviewCount: ratingAgg._count?.rating ?? 0,
         topCategory,
+        products,
       },
     });
   } catch (err) {
