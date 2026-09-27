@@ -31,6 +31,12 @@ ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
 const prisma = new PrismaClient();
 const app = express();
+
+// Render (comme tout hébergeur derrière un reverse proxy) ajoute l'en-tête X-Forwarded-For.
+// Sans ceci, express-rate-limit ne sait pas identifier l'IP réelle du client et casse
+// TOUTES les routes protégées par un limiter avec une erreur 400 (ERR_ERL_UNEXPECTED_X_FORWARDED_FOR).
+// '1' = on fait confiance à un seul proxy en amont (celui de Render), pas plus.
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -399,6 +405,59 @@ app.get('/api/auth/me', requireAuth, async (req: AuthRequest, res: Response) => 
   } catch (error) {
     console.error('Erreur /api/auth/me :', error);
     return res.status(500).json({ error: 'Erreur serveur.' });
+  }
+});
+
+// ==========================================
+// 1.5 PROFIL PUBLIC VENDEUR (page userpage : nom, nb de produits, note, catégorie principale)
+// ==========================================
+app.get('/api/users/:id/profile', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: { id: true, name: true, avatar: true, createdAt: true },
+    });
+    if (!user) return res.status(404).json({ success: false, message: 'Utilisateur introuvable' });
+
+    const [productsCount, ratingAgg, categoryGroups] = await Promise.all([
+      prisma.product.count({ where: { sellerId: id } }),
+      prisma.sellerReview.aggregate({ where: { sellerId: id }, _avg: { rating: true }, _count: { rating: true } }),
+      prisma.product.groupBy({
+        by: ['categoryId'],
+        where: { sellerId: id },
+        _count: { categoryId: true },
+        orderBy: { _count: { categoryId: 'desc' } },
+        take: 1,
+      }),
+    ]);
+
+    let topCategory: { id: string; name: string; count: number } | null = null;
+    const topCategoryId = categoryGroups[0]?.categoryId;
+    if (topCategoryId) {
+      const cat = await prisma.category.findUnique({
+        where: { id: topCategoryId },
+        select: { id: true, name: true },
+      });
+      if (cat) topCategory = { id: cat.id, name: cat.name, count: categoryGroups[0]._count.categoryId };
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        id: user.id,
+        name: user.name,
+        avatar: user.avatar,
+        memberSince: user.createdAt,
+        productsCount,
+        averageRating: ratingAgg._avg?.rating ?? null,
+        reviewCount: ratingAgg._count?.rating ?? 0,
+        topCategory,
+      },
+    });
+  } catch (err) {
+    console.error('Erreur profil public vendeur:', err);
+    return res.status(500).json({ success: false, message: 'Erreur serveur' });
   }
 });
 
