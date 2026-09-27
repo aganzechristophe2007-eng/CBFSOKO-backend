@@ -383,6 +383,9 @@ export const createProduct = async (
               10
             ) || 1,
 
+          weight:
+            body.weight ? parseFloat(body.weight) : null,
+
           state:
             (body.state as ProductState) ||
             ProductState.NEUF,

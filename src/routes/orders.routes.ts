@@ -1,7 +1,13 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { requireAuth } from '../middleware/auth.middleware';
-import { createDeliveryRequest, getMyOrders, confirmOrder, denyOrder } from '../controllers/orders.controller';
+import {
+  createDeliveryRequest,
+  getMyOrders,
+  confirmOrder,
+  denyOrder,
+  getOrderPaymentSummary,
+} from '../controllers/orders.controller';
 
 const router = Router();
 
@@ -20,5 +26,6 @@ router.get('/mine', getMyOrders);
 router.post('/delivery-request', deliveryRequestLimiter, createDeliveryRequest);
 router.patch('/:id/confirm', confirmOrder);
 router.patch('/:id/deny', denyOrder);
+router.get('/:id/payment-summary', getOrderPaymentSummary);
 
 export default router;

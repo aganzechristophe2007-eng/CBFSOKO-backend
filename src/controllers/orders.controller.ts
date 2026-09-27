@@ -7,6 +7,39 @@ import { MESSAGE_INCLUDE, deliverMessage } from './messages.controller';
 const DELIVERY_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 heures
 const SIMILAR_PRODUCTS_LIMIT = 6;
 
+// Commission de la plateforme sur le prix du produit (hors livraison).
+const PLATFORM_COMMISSION_RATE = 0.03; // 3%
+
+// Barème de livraison, basé sur le poids total de l'envoi (poids unitaire × quantité).
+// Standard "palier progressif" utilisé par la plupart des services de livraison locaux :
+// un minimum forfaitaire pour les petits colis, puis un tarif au kg qui augmente par
+// palier pour les envois lourds (le transport de charges lourdes coûte plus cher au kg,
+// pas seulement proportionnellement).
+function calculateDeliveryFeeCDF(unitWeightKg: number | null | undefined, quantity: number): number {
+  const safeWeight = unitWeightKg && unitWeightKg > 0 ? unitWeightKg : 1; // défaut si non renseigné
+  const safeQuantity = quantity > 0 ? quantity : 1;
+  const totalWeight = safeWeight * safeQuantity;
+
+  let fee: number;
+  if (totalWeight <= 3) {
+    fee = 2000; // forfait minimum, petits objets
+  } else if (totalWeight <= 10) {
+    fee = 2000 + (totalWeight - 3) * 1000;
+  } else {
+    fee = 2000 + 7 * 1000 + (totalWeight - 10) * 1500; // charges lourdes : palier plus cher
+  }
+
+  return Math.round(fee / 100) * 100; // arrondi au 100 CDF le plus proche
+}
+
+// Convertit un montant CDF en USD en réutilisant le taux réel de CETTE commande
+// (order.totalCDF / order.totalUSD), pour rester cohérent avec le prix affiché au client
+// plutôt que d'appliquer un taux global qui pourrait diverger.
+function cdfToUsd(amountCDF: number, order: { totalUSD: number; totalCDF: number }): number {
+  const rate = order.totalUSD > 0 && order.totalCDF > 0 ? order.totalCDF / order.totalUSD : 2300;
+  return Math.round((amountCDF / rate) * 100) / 100;
+}
+
 const deliveryRequestSchema = z.object({
   productId: z.string().min(1, 'productId requis'),
 });
@@ -24,11 +57,13 @@ const ORDER_INCLUDE = {
           priceCDF: true,
           categoryId: true,
           isSold: true,
+          weight: true,
           seller: { select: { id: true, name: true, avatar: true } },
         },
       },
     },
   },
+  review: { select: { rating: true, comment: true } },
 } as const;
 
 async function findSimilarProducts(categoryId: string, excludeProductId: string) {
@@ -186,6 +221,58 @@ export async function getMyOrders(req: AuthRequest, res: Response) {
     return res.json({ success: true, data: result });
   } catch (err) {
     console.error('Erreur getMyOrders:', err);
+    return res.status(500).json({ success: false, message: 'Erreur serveur' });
+  }
+}
+
+// GET /api/orders/:id/payment-summary — alimente PayPage.tsx
+// Sécurité : réservé au buyer de cette commande, et seulement une fois que le vendeur
+// a confirmé la disponibilité (status CONFIRMED). Tous les montants (livraison,
+// commission, total) sont calculés ici, jamais reçus ni fait confiance depuis le client.
+export async function getOrderPaymentSummary(req: AuthRequest, res: Response) {
+  try {
+    const buyerId = req.user!.id;
+    const id = String(req.params.id);
+
+    const order = await prisma.order.findUnique({ where: { id }, include: ORDER_INCLUDE });
+    if (!order) return res.status(404).json({ success: false, message: 'Commande introuvable' });
+    if (order.buyerId !== buyerId) {
+      return res.status(403).json({ success: false, message: 'Accès refusé' });
+    }
+    if (order.status !== 'CONFIRMED') {
+      return res.status(409).json({ success: false, message: "Cette commande n'est pas encore prête pour le paiement." });
+    }
+
+    let totalWeightKg = 0;
+    for (const item of order.items) {
+      const unitWeight = item.product.weight && item.product.weight > 0 ? item.product.weight : 1;
+      totalWeightKg += unitWeight * item.quantity;
+    }
+    const deliveryFeeCDF = calculateDeliveryFeeCDF(
+      order.items[0]?.product.weight ?? null,
+      order.items.reduce((sum, it) => sum + it.quantity, 0)
+    );
+    const commissionCDF = Math.round(order.totalCDF * PLATFORM_COMMISSION_RATE);
+    const grandTotalCDF = order.totalCDF + deliveryFeeCDF + commissionCDF;
+
+    return res.json({
+      success: true,
+      data: {
+        order,
+        totalWeightKg,
+        subtotalCDF: order.totalCDF,
+        subtotalUSD: order.totalUSD,
+        deliveryFeeCDF,
+        deliveryFeeUSD: cdfToUsd(deliveryFeeCDF, order),
+        commissionRate: PLATFORM_COMMISSION_RATE,
+        commissionCDF,
+        commissionUSD: cdfToUsd(commissionCDF, order),
+        grandTotalCDF,
+        grandTotalUSD: cdfToUsd(grandTotalCDF, order),
+      },
+    });
+  } catch (err) {
+    console.error('Erreur getOrderPaymentSummary:', err);
     return res.status(500).json({ success: false, message: 'Erreur serveur' });
   }
 }
