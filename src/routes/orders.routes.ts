@@ -6,6 +6,7 @@ import {
   getMyOrders,
   confirmOrder,
   denyOrder,
+  verifyOrderByCourier,
   getOrderPaymentSummary,
 } from '../controllers/orders.controller';
 
@@ -26,6 +27,9 @@ router.get('/mine', getMyOrders);
 router.post('/delivery-request', deliveryRequestLimiter, createDeliveryRequest);
 router.patch('/:id/confirm', confirmOrder);
 router.patch('/:id/deny', denyOrder);
+// Réservé côté controller aux rôles COURIER/ADMIN (revérifié en base à chaque appel) ;
+// requireAuth suffit ici, l'autorisation fine se fait dans verifyOrderByCourier.
+router.patch('/:id/verify', verifyOrderByCourier);
 router.get('/:id/payment-summary', getOrderPaymentSummary);
 
 export default router;

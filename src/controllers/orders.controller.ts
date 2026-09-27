@@ -4,7 +4,7 @@ import prisma from '../lib/prisma';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { MESSAGE_INCLUDE, deliverMessage } from './messages.controller';
 
-const DELIVERY_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 heures
+const DELIVERY_TIMEOUT_MS = 12 * 60 * 60 * 1000; // 12 heures max laissées au vendeur pour confirmer
 const SIMILAR_PRODUCTS_LIMIT = 6;
 
 // Commission de la plateforme sur le prix du produit (hors livraison).
@@ -40,8 +40,21 @@ function cdfToUsd(amountCDF: number, order: { totalUSD: number; totalCDF: number
   return Math.round((amountCDF / rate) * 100) / 100;
 }
 
+// Revérifie toujours le rôle en base (jamais fait confiance à un éventuel claim de rôle
+// présent dans le JWT, qui peut être obsolète si le rôle a changé depuis l'émission du token).
+async function isCourierOrAdmin(userId: string): Promise<boolean> {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
+  return !!user && ['COURIER', 'ADMIN', 'SUPER_ADMIN'].includes(user.role);
+}
+
 const deliveryRequestSchema = z.object({
   productId: z.string().min(1, 'productId requis'),
+});
+
+// Corps envoyé par l'app livreur lors du passage "Vérifié par CBFSOKO".
+const courierVerifySchema = z.object({
+  verificationNote: z.string().max(500).optional(),
+  verificationPhotos: z.array(z.string().min(1)).max(8).optional(),
 });
 
 // Ce que le front (Orders.tsx) affiche pour une commande : produit, vendeur, prix, statut, chrono.
@@ -64,6 +77,7 @@ const ORDER_INCLUDE = {
     },
   },
   review: { select: { rating: true, comment: true } },
+  courier: { select: { id: true, name: true, avatar: true } },
 } as const;
 
 async function findSimilarProducts(categoryId: string, excludeProductId: string) {
@@ -226,9 +240,12 @@ export async function getMyOrders(req: AuthRequest, res: Response) {
 }
 
 // GET /api/orders/:id/payment-summary — alimente PayPage.tsx
-// Sécurité : réservé au buyer de cette commande, et seulement une fois que le vendeur
-// a confirmé la disponibilité (status CONFIRMED). Tous les montants (livraison,
-// commission, total) sont calculés ici, jamais reçus ni fait confiance depuis le client.
+// Sécurité : réservé au buyer de cette commande, et seulement une fois que le livreur
+// CBFSOKO a physiquement vérifié l'article (status COURIER_VERIFIED). Le paiement n'est
+// PAS débloqué dès la simple confirmation du vendeur (CONFIRMED) : c'est précisément le
+// contrôle qualité terrain qui doit précéder tout débit, conformément au pilier de confiance
+// du produit. Tous les montants (livraison, commission, total) sont calculés ici, jamais
+// reçus ni fait confiance depuis le client.
 export async function getOrderPaymentSummary(req: AuthRequest, res: Response) {
   try {
     const buyerId = req.user!.id;
@@ -239,7 +256,7 @@ export async function getOrderPaymentSummary(req: AuthRequest, res: Response) {
     if (order.buyerId !== buyerId) {
       return res.status(403).json({ success: false, message: 'Accès refusé' });
     }
-    if (order.status !== 'CONFIRMED') {
+    if (order.status !== 'COURIER_VERIFIED') {
       return res.status(409).json({ success: false, message: "Cette commande n'est pas encore prête pour le paiement." });
     }
 
@@ -292,6 +309,15 @@ export async function confirmOrder(req: AuthRequest, res: Response) {
     if (!product || product.seller.id !== sellerId) {
       return res.status(403).json({ success: false, message: 'Accès refusé' });
     }
+
+    // Ferme la faille de course : si le délai de 12h est dépassé mais que le balayage
+    // périodique n'est pas encore passé, on expire la commande ici avant toute autre
+    // vérification, pour empêcher un vendeur de confirmer "en retard" une commande que
+    // l'acheteur voit déjà comme annulée côté front.
+    const justExpired = await expireIfNeeded(order as any);
+    if (justExpired) {
+      return res.status(409).json({ success: false, message: 'Le délai de confirmation de 12h est dépassé, cette commande a expiré.' });
+    }
     if (order.status !== 'AWAITING_SELLER_CONFIRMATION') {
       return res.status(409).json({ success: false, message: 'Cette commande ne peut plus être confirmée' });
     }
@@ -306,7 +332,7 @@ export async function confirmOrder(req: AuthRequest, res: Response) {
       data: {
         userId: order.buyerId,
         title: 'Produit confirmé',
-        message: `Le vendeur a confirmé la disponibilité de "${product.title}". Votre commande est en cours.`,
+        message: `Le vendeur a confirmé la disponibilité de "${product.title}". Un livreur CBFSOKO va récupérer et vérifier l'article avant expédition.`,
       },
     });
 
@@ -330,6 +356,12 @@ export async function denyOrder(req: AuthRequest, res: Response) {
     if (!product || product.seller.id !== sellerId) {
       return res.status(403).json({ success: false, message: 'Accès refusé' });
     }
+
+    // Même correctif de course que sur confirmOrder.
+    const justExpired = await expireIfNeeded(order as any);
+    if (justExpired) {
+      return res.json({ success: true }); // déjà expirée, résultat équivalent pour le vendeur
+    }
     if (order.status !== 'AWAITING_SELLER_CONFIRMATION') {
       return res.status(409).json({ success: false, message: 'Cette commande ne peut plus être modifiée' });
     }
@@ -347,6 +379,70 @@ export async function denyOrder(req: AuthRequest, res: Response) {
     return res.json({ success: true });
   } catch (err) {
     console.error('Erreur denyOrder:', err);
+    return res.status(500).json({ success: false, message: 'Erreur serveur' });
+  }
+}
+
+// PATCH /api/orders/:id/verify — réservé aux livreurs CBFSOKO (rôle COURIER) et aux admins.
+// C'est le passage physique du livreur chez le vendeur : il récupère l'article, vérifie sa
+// conformité (photos/état) et, une fois satisfait, fait basculer la commande vers
+// COURIER_VERIFIED. C'est CE statut, et non la simple confirmation du vendeur, qui débloque
+// le paiement côté acheteur (voir getOrderPaymentSummary) — c'est le cœur du contrôle qualité
+// "Vérifié par CBFSOKO".
+export async function verifyOrderByCourier(req: AuthRequest, res: Response) {
+  try {
+    const courierId = req.user!.id;
+
+    const authorized = await isCourierOrAdmin(courierId);
+    if (!authorized) {
+      return res.status(403).json({ success: false, message: 'Accès réservé aux livreurs CBFSOKO' });
+    }
+
+    const id = String(req.params.id);
+    const parsed = courierVerifySchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ success: false, message: parsed.error.issues[0]?.message || 'Requête invalide' });
+    }
+    const { verificationNote, verificationPhotos } = parsed.data;
+
+    const order = await prisma.order.findUnique({ where: { id }, include: ORDER_INCLUDE });
+    if (!order) return res.status(404).json({ success: false, message: 'Commande introuvable' });
+
+    // Seule une commande déjà confirmée par le vendeur peut passer en "vérifiée livreur" :
+    // impossible de sauter l'étape de confirmation vendeur.
+    if (order.status !== 'CONFIRMED') {
+      return res.status(409).json({
+        success: false,
+        message: "Cette commande doit d'abord être confirmée par le vendeur avant la vérification livreur.",
+      });
+    }
+
+    const updated = await prisma.order.update({
+      where: { id },
+      data: {
+        status: 'COURIER_VERIFIED',
+        courierId,
+        verifiedAt: new Date(),
+        verificationNote: verificationNote ?? null,
+        verificationPhotos: verificationPhotos ?? [],
+      },
+      include: ORDER_INCLUDE,
+    });
+
+    const product = order.items[0]?.product;
+    await prisma.notification.create({
+      data: {
+        userId: order.buyerId,
+        title: 'Vérifié par CBFSOKO',
+        message: product
+          ? `"${product.title}" a été vérifié par notre livreur. Vous pouvez procéder au paiement en toute confiance.`
+          : 'Votre article a été vérifié par notre livreur. Vous pouvez procéder au paiement.',
+      },
+    });
+
+    return res.json({ success: true, order: updated });
+  } catch (err) {
+    console.error('Erreur verifyOrderByCourier:', err);
     return res.status(500).json({ success: false, message: 'Erreur serveur' });
   }
 }

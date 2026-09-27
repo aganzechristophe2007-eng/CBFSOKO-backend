@@ -29,6 +29,7 @@ model User {
   notifications    Notification[]
   orders           Order[]        @relation("BuyerOrders")
   ordersAsSeller   Order[]        @relation("SellerOrders")
+  ordersAsCourier  Order[]        @relation("CourierOrders")
   products         Product[]      @relation("SellerProducts")
   reels            Reel[]
   reelComments     ReelComment[]
@@ -136,35 +137,41 @@ model CartItem {
 model Order {
   id              String        @id @default(cuid())
   buyerId         String
-  sellerId        String? // renseignÃ© pour les rÃ©servations rapides depuis un reel (1 seul produit/vendeur)
+  sellerId        String? // renseigne pour les reservations rapides depuis un reel (1 seul produit/vendeur)
   totalUSD        Float         @default(0)
   totalCDF        Float         @default(0)
   status          OrderStatus   @default(PENDING)
   deliveryAddress String?
-  expiresAt       DateTime? // fin du dÃ©lai de 24h laissÃ© au vendeur pour confirmer
-  confirmedAt     DateTime?
+  expiresAt       DateTime? // fin du delai de 12h laisse au vendeur pour confirmer
+  confirmedAt     DateTime? // horodatage de la confirmation du vendeur (statut CONFIRMED)
+  courierId          String? // livreur CBFSOKO ayant pris en charge la verification terrain
+  verifiedAt         DateTime? // horodatage du passage en COURIER_VERIFIED
+  verificationNote   String? // remarque libre du livreur (etat, conformite)
+  verificationPhotos String[] @default([]) // photos prises par le livreur a la recuperation
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
   buyer           User          @relation("BuyerOrders", fields: [buyerId], references: [id])
   seller          User?         @relation("SellerOrders", fields: [sellerId], references: [id])
+  courier         User?         @relation("CourierOrders", fields: [courierId], references: [id])
   items           OrderItem[]
   review          SellerReview?
   messages        Message[]
 
   @@index([buyerId])
   @@index([sellerId])
+  @@index([courierId])
   @@index([status, expiresAt])
 }
 
-// Note du vendeur laissÃƒÂ©e par un acheteur. CrÃƒÂ©ÃƒÂ©e uniquement cÃƒÂ´tÃƒÂ© serveur
-// aprÃƒÂ¨s vÃƒÂ©rification qu'une commande LIVRÃƒâ€°E existe entre l'acheteur et ce
-// vendeur (voir createSellerReview) : impossible de noter sans avoir achetÃƒÂ©.
+// Note du vendeur laissÃƒÆ’Ã‚Â©e par un acheteur. CrÃƒÆ’Ã‚Â©ÃƒÆ’Ã‚Â©e uniquement cÃƒÆ’Ã‚Â´tÃƒÆ’Ã‚Â© serveur
+// aprÃƒÆ’Ã‚Â¨s vÃƒÆ’Ã‚Â©rification qu'une commande LIVRÃƒÆ’Ã¢â‚¬Â°E existe entre l'acheteur et ce
+// vendeur (voir createSellerReview) : impossible de noter sans avoir achetÃƒÆ’Ã‚Â©.
 model SellerReview {
   id        String   @id @default(cuid())
   sellerId  String
   buyerId   String
   orderId   String   @unique
-  rating    Int // 1 ÃƒÂ  5, validÃƒÂ© cÃƒÂ´tÃƒÂ© serveur
+  rating    Int // 1 ÃƒÆ’Ã‚Â  5, validÃƒÆ’Ã‚Â© cÃƒÆ’Ã‚Â´tÃƒÆ’Ã‚Â© serveur
   comment   String?
   createdAt DateTime @default(now())
   seller    User     @relation("SellerReviewsReceived", fields: [sellerId], references: [id], onDelete: Cascade)
@@ -197,14 +204,14 @@ model Reel {
   seller    User     @relation(fields: [sellerId], references: [id], onDelete: Cascade)
 }
 
-// Une vue par identitÃƒÆ’Ã‚Â© (utilisateur connectÃƒÆ’Ã‚Â© OU visiteur anonyme) et par jour, pour un reel donnÃƒÆ’Ã‚Â©.
-// On s'appuie sur Product (et non sur le modÃƒÆ’Ã‚Â¨le Reel) car c'est Product.id qui identifie
-// rÃƒÆ’Ã‚Â©ellement un reel cÃƒÆ’Ã‚Â´tÃƒÆ’Ã‚Â© frontend (Home.tsx construit les reels ÃƒÆ’Ã‚Â  partir des produits avec videoUrl).
+// Une vue par identitÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© (utilisateur connectÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© OU visiteur anonyme) et par jour, pour un reel donnÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©.
+// On s'appuie sur Product (et non sur le modÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨le Reel) car c'est Product.id qui identifie
+// rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ellement un reel cÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â´tÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© frontend (Home.tsx construit les reels ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  partir des produits avec videoUrl).
 model ReelView {
   id          String   @id @default(cuid())
   productId   String
   identityKey String // "user:<userId>" ou "visitor:<visitorId>"
-  day         String // "YYYY-MM-DD" (UTC) : sert de fenÃƒÆ’Ã‚Âªtre d'unicitÃƒÆ’Ã‚Â© quotidienne
+  day         String // "YYYY-MM-DD" (UTC) : sert de fenÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Âªtre d'unicitÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© quotidienne
   createdAt   DateTime @default(now())
   product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
 
@@ -242,11 +249,11 @@ model Message {
   senderId      String
   receiverId    String
   type          MessageType @default(TEXT)
-  content       String? // texte du message, ou lÃ©gende optionnelle pour un mÃ©dia
-  mediaUrl      String? // URL sÃ©curisÃ©e Cloudinary (image, audio ou vidÃ©o)
-  mediaPublicId String? // public_id Cloudinary, nÃ©cessaire pour une suppression future
-  mediaDuration Int? // durÃ©e en secondes (audio/vidÃ©o)
-  orderId       String? // renseignÃ© uniquement pour un message de type ORDER_REQUEST
+  content       String? // texte du message, ou lÃƒÂ©gende optionnelle pour un mÃƒÂ©dia
+  mediaUrl      String? // URL sÃƒÂ©curisÃƒÂ©e Cloudinary (image, audio ou vidÃƒÂ©o)
+  mediaPublicId String? // public_id Cloudinary, nÃƒÂ©cessaire pour une suppression future
+  mediaDuration Int? // durÃƒÂ©e en secondes (audio/vidÃƒÂ©o)
+  orderId       String? // renseignÃƒÂ© uniquement pour un message de type ORDER_REQUEST
   isRead        Boolean     @default(false)
   readAt        DateTime?
   createdAt     DateTime    @default(now())
@@ -336,6 +343,7 @@ model Feedback {
 
 enum Role {
   USER
+  COURIER // livreur CBFSOKO : rÃ©cupÃ¨re, vÃ©rifie et expÃ©die le produit aprÃ¨s confirmation du vendeur
   ADMIN
   ADMIN_FINANCE
   SUPER_ADMIN
@@ -354,12 +362,13 @@ enum ProductState {
 
 enum OrderStatus {
   PENDING
-  AWAITING_SELLER_CONFIRMATION // rÃ©servation depuis un reel, en attente de confirmation du vendeur (24h)
-  CONFIRMED
+  AWAITING_SELLER_CONFIRMATION // reservation depuis un reel, en attente de confirmation du vendeur (12h max)
+  CONFIRMED // le vendeur a valide la disponibilite ; un livreur CBFSOKO va recuperer et verifier l'article
+  COURIER_VERIFIED // livreur passe sur place, article conforme (photos/etat) ; paiement securise debloque
   SHIPPED
   DELIVERED
   CANCELLED
-  EXPIRED // dÃ©lai de 24h dÃ©passÃ©, ou vendeur ayant signalÃ© le produit indisponible
+  EXPIRED // delai de 12h depasse sans reponse du vendeur, ou vendeur ayant signale le produit indisponible
 }
 
 enum TransactionType {
