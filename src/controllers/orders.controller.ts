@@ -194,7 +194,7 @@ export async function getMyOrders(req: AuthRequest, res: Response) {
 export async function confirmOrder(req: AuthRequest, res: Response) {
   try {
     const sellerId = req.user!.id;
-    const { id } = req.params;
+    const id = String(req.params.id);
 
     const order = await prisma.order.findUnique({ where: { id }, include: ORDER_INCLUDE });
     if (!order) return res.status(404).json({ success: false, message: 'Commande introuvable' });
@@ -234,7 +234,7 @@ export async function confirmOrder(req: AuthRequest, res: Response) {
 export async function denyOrder(req: AuthRequest, res: Response) {
   try {
     const sellerId = req.user!.id;
-    const { id } = req.params;
+    const id = String(req.params.id);
 
     const order = await prisma.order.findUnique({ where: { id }, include: ORDER_INCLUDE });
     if (!order) return res.status(404).json({ success: false, message: 'Commande introuvable' });
