@@ -21,6 +21,11 @@ import http from 'http';
 import { initSocket } from './src/services/socket.service';
 // ⚠️ Adapte ce chemin si ton fichier cloudinary.ts n'est pas dans src/config/
 import cloudinary from './src/config/cloudinary';
+// ⚠️ Adapte ces chemins à l'emplacement réel de tes fichiers routes/ dans src/
+import messagesRouter from './src/routes/messages.routes';
+import cartRouter from './src/routes/cart.routes';
+import ordersRouter from './src/routes/orders.routes';
+import { sweepExpiredOrders } from './src/controllers/orders.controller';
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
@@ -65,6 +70,15 @@ app.use(express.json({ limit: '2mb' })); // Plus de base64 en JSON : 2mb suffit 
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 app.use(cookieParser());
 app.use('/uploads', express.static(UPLOADS_ROOT, { maxAge: '30d', immutable: true }));
+
+// ==========================================
+// ROUTERS SÉPARÉS (messagerie, panier, commandes/livraison)
+// N'existaient auparavant que comme fichiers isolés, jamais montés : sans ces 3 lignes,
+// /api/messages, /api/cart et /api/orders ne répondent à rien.
+// ==========================================
+app.use('/api/messages', messagesRouter);
+app.use('/api/cart', cartRouter);
+app.use('/api/orders', ordersRouter);
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -1409,6 +1423,14 @@ if (process.env.NODE_ENV !== 'production') {
   prisma.$queryRaw`SELECT 1`.catch(() => undefined); // réveil dès le démarrage
   setInterval(() => { prisma.$queryRaw`SELECT 1`.catch(() => undefined); }, 4 * 60 * 1000);
 }
+
+// ⏱️ Rattrape les demandes de livraison dont les 24h sont dépassées, même si personne n'a
+// rouvert l'app entre-temps. Complète (et ne remplace pas) la vérification "à la lecture"
+// faite dans getMyOrders : sur Render gratuit, ce setInterval peut être mis en pause si le
+// service s'endort, donc la vérification à la lecture reste la garantie ultime.
+setInterval(() => {
+  sweepExpiredOrders().catch((err) => console.error('Erreur sweepExpiredOrders:', err));
+}, 5 * 60 * 1000);
 
 // 🔌 Un seul serveur HTTP pour Express ET Socket.io : sans ça, /socket.io/
 // n'existe nulle part et toute tentative de connexion échoue en 404.

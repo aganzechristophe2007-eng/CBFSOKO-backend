@@ -5,7 +5,7 @@ import { uploadBufferToCloudinary } from '../lib/cloudinary';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { getIO, isUserOnline, activeConversation } from '../services/socket.service';
 
-const MESSAGE_INCLUDE = { sender: { select: { id: true, name: true, avatar: true } } };
+export const MESSAGE_INCLUDE = { sender: { select: { id: true, name: true, avatar: true } } };
 
 export const mediaUpload = multer({
   storage: multer.memoryStorage(),
@@ -25,7 +25,9 @@ type MessageWithSender = Awaited<ReturnType<typeof prisma.message.create>> & {
   sender: { id: string; name: string; avatar: string | null };
 };
 
-async function deliverMessage(message: MessageWithSender) {
+// Exportée : réutilisée par orders.controller.ts pour livrer le message automatique
+// "vérification produit" au vendeur exactement comme un message classique (socket + notification).
+export async function deliverMessage(message: MessageWithSender) {
   const io = getIO();
   io.to(`user:${message.receiverId}`).emit('message:new', message);
   io.to(`user:${message.senderId}`).emit('message:sent', message);
@@ -36,7 +38,8 @@ async function deliverMessage(message: MessageWithSender) {
       message.type === 'TEXT' ? 'vous a envoyé un message'
       : message.type === 'IMAGE' ? 'vous a envoyé une photo'
       : message.type === 'AUDIO' ? 'vous a envoyé un message vocal'
-      : 'vous a envoyé une vidéo';
+      : message.type === 'VIDEO' ? 'vous a envoyé une vidéo'
+      : 'vous a envoyé une demande de livraison';
     await prisma.notification.create({
       data: { userId: message.receiverId, title: 'Nouveau message', message: `${message.sender.name} ${label}` },
     });
@@ -92,6 +95,19 @@ export async function getConversationMessages(req: AuthRequest, res: Response) {
       orderBy: { createdAt: 'desc' },
       take: limit,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      include: {
+        ...MESSAGE_INCLUDE,
+        order: {
+          select: {
+            id: true,
+            status: true,
+            expiresAt: true,
+            totalUSD: true,
+            totalCDF: true,
+            items: { take: 1, select: { product: { select: { id: true, title: true } } } },
+          },
+        },
+      },
     });
 
     res.json({

@@ -28,6 +28,7 @@ model User {
   sentMessages     Message[]      @relation("SentMessages")
   notifications    Notification[]
   orders           Order[]        @relation("BuyerOrders")
+  ordersAsSeller   Order[]        @relation("SellerOrders")
   products         Product[]      @relation("SellerProducts")
   reels            Reel[]
   reelComments     ReelComment[]
@@ -133,30 +134,37 @@ model CartItem {
 }
 
 model Order {
-  id              String      @id @default(cuid())
+  id              String        @id @default(cuid())
   buyerId         String
-  totalUSD        Float       @default(0)
-  totalCDF        Float       @default(0)
-  status          OrderStatus @default(PENDING)
+  sellerId        String? // renseignÃ© pour les rÃ©servations rapides depuis un reel (1 seul produit/vendeur)
+  totalUSD        Float         @default(0)
+  totalCDF        Float         @default(0)
+  status          OrderStatus   @default(PENDING)
   deliveryAddress String?
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-  buyer           User        @relation("BuyerOrders", fields: [buyerId], references: [id])
+  expiresAt       DateTime? // fin du dÃ©lai de 24h laissÃ© au vendeur pour confirmer
+  confirmedAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  buyer           User          @relation("BuyerOrders", fields: [buyerId], references: [id])
+  seller          User?         @relation("SellerOrders", fields: [sellerId], references: [id])
   items           OrderItem[]
   review          SellerReview?
+  messages        Message[]
 
   @@index([buyerId])
+  @@index([sellerId])
+  @@index([status, expiresAt])
 }
 
-// Note du vendeur laissÃ©e par un acheteur. CrÃ©Ã©e uniquement cÃ´tÃ© serveur
-// aprÃ¨s vÃ©rification qu'une commande LIVRÃ‰E existe entre l'acheteur et ce
-// vendeur (voir createSellerReview) : impossible de noter sans avoir achetÃ©.
+// Note du vendeur laissÃƒÂ©e par un acheteur. CrÃƒÂ©ÃƒÂ©e uniquement cÃƒÂ´tÃƒÂ© serveur
+// aprÃƒÂ¨s vÃƒÂ©rification qu'une commande LIVRÃƒâ€°E existe entre l'acheteur et ce
+// vendeur (voir createSellerReview) : impossible de noter sans avoir achetÃƒÂ©.
 model SellerReview {
   id        String   @id @default(cuid())
   sellerId  String
   buyerId   String
   orderId   String   @unique
-  rating    Int // 1 Ã  5, validÃ© cÃ´tÃ© serveur
+  rating    Int // 1 ÃƒÂ  5, validÃƒÂ© cÃƒÂ´tÃƒÂ© serveur
   comment   String?
   createdAt DateTime @default(now())
   seller    User     @relation("SellerReviewsReceived", fields: [sellerId], references: [id], onDelete: Cascade)
@@ -189,14 +197,14 @@ model Reel {
   seller    User     @relation(fields: [sellerId], references: [id], onDelete: Cascade)
 }
 
-// Une vue par identitÃƒÂ© (utilisateur connectÃƒÂ© OU visiteur anonyme) et par jour, pour un reel donnÃƒÂ©.
-// On s'appuie sur Product (et non sur le modÃƒÂ¨le Reel) car c'est Product.id qui identifie
-// rÃƒÂ©ellement un reel cÃƒÂ´tÃƒÂ© frontend (Home.tsx construit les reels ÃƒÂ  partir des produits avec videoUrl).
+// Une vue par identitÃƒÆ’Ã‚Â© (utilisateur connectÃƒÆ’Ã‚Â© OU visiteur anonyme) et par jour, pour un reel donnÃƒÆ’Ã‚Â©.
+// On s'appuie sur Product (et non sur le modÃƒÆ’Ã‚Â¨le Reel) car c'est Product.id qui identifie
+// rÃƒÆ’Ã‚Â©ellement un reel cÃƒÆ’Ã‚Â´tÃƒÆ’Ã‚Â© frontend (Home.tsx construit les reels ÃƒÆ’Ã‚Â  partir des produits avec videoUrl).
 model ReelView {
   id          String   @id @default(cuid())
   productId   String
   identityKey String // "user:<userId>" ou "visitor:<visitorId>"
-  day         String // "YYYY-MM-DD" (UTC) : sert de fenÃƒÂªtre d'unicitÃƒÂ© quotidienne
+  day         String // "YYYY-MM-DD" (UTC) : sert de fenÃƒÆ’Ã‚Âªtre d'unicitÃƒÆ’Ã‚Â© quotidienne
   createdAt   DateTime @default(now())
   product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
 
@@ -238,15 +246,18 @@ model Message {
   mediaUrl      String? // URL sÃ©curisÃ©e Cloudinary (image, audio ou vidÃ©o)
   mediaPublicId String? // public_id Cloudinary, nÃ©cessaire pour une suppression future
   mediaDuration Int? // durÃ©e en secondes (audio/vidÃ©o)
+  orderId       String? // renseignÃ© uniquement pour un message de type ORDER_REQUEST
   isRead        Boolean     @default(false)
   readAt        DateTime?
   createdAt     DateTime    @default(now())
   receiver      User        @relation("ReceivedMessages", fields: [receiverId], references: [id], onDelete: Cascade)
   sender        User        @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  order         Order?      @relation(fields: [orderId], references: [id], onDelete: SetNull)
 
   @@index([receiverId, isRead])
   @@index([senderId, receiverId, createdAt])
   @@index([receiverId, senderId, createdAt])
+  @@index([orderId])
 }
 
 enum MessageType {
@@ -254,6 +265,7 @@ enum MessageType {
   IMAGE
   AUDIO
   VIDEO
+  ORDER_REQUEST
 }
 
 model Call {
@@ -342,10 +354,12 @@ enum ProductState {
 
 enum OrderStatus {
   PENDING
+  AWAITING_SELLER_CONFIRMATION // rÃ©servation depuis un reel, en attente de confirmation du vendeur (24h)
   CONFIRMED
   SHIPPED
   DELIVERED
   CANCELLED
+  EXPIRED // dÃ©lai de 24h dÃ©passÃ©, ou vendeur ayant signalÃ© le produit indisponible
 }
 
 enum TransactionType {

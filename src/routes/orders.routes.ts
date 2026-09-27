@@ -1,13 +1,24 @@
 import { Router } from 'express';
-import { getMyOrders, getOrderById, createOrder, updateOrderStatus } from '../controllers/orders.controller';
+import rateLimit from 'express-rate-limit';
 import { requireAuth } from '../middleware/auth.middleware';
+import { createDeliveryRequest, getMyOrders, confirmOrder, denyOrder } from '../controllers/orders.controller';
 
 const router = Router();
 
 router.use(requireAuth);
-router.get('/', getMyOrders);
-router.get('/:id', getOrderById);
-router.post('/', createOrder);
-router.put('/:id/status', updateOrderStatus);
+
+// Empêche un acheteur de spammer des demandes de livraison (5 par heure, tous produits confondus).
+const deliveryRequestLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Trop de demandes de livraison. Réessayez plus tard.' },
+});
+
+router.get('/mine', getMyOrders);
+router.post('/delivery-request', deliveryRequestLimiter, createDeliveryRequest);
+router.patch('/:id/confirm', confirmOrder);
+router.patch('/:id/deny', denyOrder);
 
 export default router;
