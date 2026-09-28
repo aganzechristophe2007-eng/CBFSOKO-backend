@@ -42,9 +42,13 @@ function cdfToUsd(amountCDF: number, order: { totalUSD: number; totalCDF: number
 
 // Revérifie toujours le rôle en base (jamais fait confiance à un éventuel claim de rôle
 // présent dans le JWT, qui peut être obsolète si le rôle a changé depuis l'émission du token).
-async function isCourierOrAdmin(userId: string): Promise<boolean> {
+async function getUserRole(userId: string): Promise<string | null> {
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
-  return !!user && ['COURIER', 'ADMIN', 'SUPER_ADMIN'].includes(user.role);
+  return user?.role ?? null;
+}
+async function isAdmin(userId: string): Promise<boolean> {
+  const role = await getUserRole(userId);
+  return !!role && ['ADMIN', 'SUPER_ADMIN'].includes(role);
 }
 
 const deliveryRequestSchema = z.object({
@@ -55,6 +59,11 @@ const deliveryRequestSchema = z.object({
 const courierVerifySchema = z.object({
   verificationNote: z.string().max(500).optional(),
   verificationPhotos: z.array(z.string().min(1)).max(8).optional(),
+});
+
+// Corps envoyé par l'admin pour assigner un livreur à une commande confirmée.
+const assignCourierSchema = z.object({
+  courierId: z.string().min(1, 'courierId requis'),
 });
 
 // Ce que le front (Orders.tsx) affiche pour une commande : produit, vendeur, prix, statut, chrono.
@@ -78,6 +87,13 @@ const ORDER_INCLUDE = {
   },
   review: { select: { rating: true, comment: true } },
   courier: { select: { id: true, name: true, avatar: true } },
+} as const;
+
+// Ce que la file d'attente du livreur (CourierQueue.tsx) a besoin de voir en plus :
+// coordonnées de l'acheteur, pour organiser la collecte/livraison.
+const COURIER_ORDER_INCLUDE = {
+  ...ORDER_INCLUDE,
+  buyer: { select: { id: true, name: true, avatar: true } },
 } as const;
 
 async function findSimilarProducts(categoryId: string, excludeProductId: string) {
@@ -393,7 +409,8 @@ export async function verifyOrderByCourier(req: AuthRequest, res: Response) {
   try {
     const courierId = req.user!.id;
 
-    const authorized = await isCourierOrAdmin(courierId);
+    const role = await getUserRole(courierId);
+    const authorized = !!role && ['COURIER', 'ADMIN', 'SUPER_ADMIN'].includes(role);
     if (!authorized) {
       return res.status(403).json({ success: false, message: 'Accès réservé aux livreurs CBFSOKO' });
     }
@@ -417,11 +434,25 @@ export async function verifyOrderByCourier(req: AuthRequest, res: Response) {
       });
     }
 
+    // Dispatch manuel : la commande doit d'abord avoir été assignée par un admin.
+    // Un livreur ne peut vérifier que SES propres commandes assignées ; un admin peut
+    // toujours passer outre (support/dépannage), mais un livreur ne peut jamais
+    // s'auto-assigner une commande via cette route.
+    const requesterIsAdmin = role === 'ADMIN' || role === 'SUPER_ADMIN';
+    if (!order.courierId) {
+      return res.status(409).json({
+        success: false,
+        message: "Cette commande n'a pas encore été assignée à un livreur par un administrateur.",
+      });
+    }
+    if (!requesterIsAdmin && order.courierId !== courierId) {
+      return res.status(403).json({ success: false, message: 'Cette commande est assignée à un autre livreur.' });
+    }
+
     const updated = await prisma.order.update({
       where: { id },
       data: {
         status: 'COURIER_VERIFIED',
-        courierId,
         verifiedAt: new Date(),
         verificationNote: verificationNote ?? null,
         verificationPhotos: verificationPhotos ?? [],
@@ -443,6 +474,132 @@ export async function verifyOrderByCourier(req: AuthRequest, res: Response) {
     return res.json({ success: true, order: updated });
   } catch (err) {
     console.error('Erreur verifyOrderByCourier:', err);
+    return res.status(500).json({ success: false, message: 'Erreur serveur' });
+  }
+}
+
+// PATCH /api/orders/:id/assign-courier — réservé aux admins : dispatch manuel d'un livreur
+// sur une commande déjà confirmée par le vendeur. C'est ce qui fait apparaître la commande
+// dans la file d'attente du livreur (GET /orders/courier/mine).
+export async function assignCourier(req: AuthRequest, res: Response) {
+  try {
+    const adminId = req.user!.id;
+    const admin = await isAdmin(adminId);
+    if (!admin) {
+      return res.status(403).json({ success: false, message: 'Accès réservé aux administrateurs' });
+    }
+
+    const id = String(req.params.id);
+    const parsed = assignCourierSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ success: false, message: parsed.error.issues[0]?.message || 'Requête invalide' });
+    }
+    const { courierId } = parsed.data;
+
+    const order = await prisma.order.findUnique({ where: { id }, include: ORDER_INCLUDE });
+    if (!order) return res.status(404).json({ success: false, message: 'Commande introuvable' });
+    if (order.status !== 'CONFIRMED') {
+      return res.status(409).json({
+        success: false,
+        message: 'Seule une commande confirmée par le vendeur peut être assignée à un livreur.',
+      });
+    }
+
+    // On revérifie toujours en base que la cible est bien un livreur actif, jamais fait
+    // confiance à l'id fourni par le client sans validation de son rôle réel.
+    const courier = await prisma.user.findUnique({ where: { id: courierId }, select: { id: true, role: true, name: true } });
+    if (!courier || courier.role !== 'COURIER') {
+      return res.status(400).json({ success: false, message: "Cet utilisateur n'est pas un livreur CBFSOKO." });
+    }
+
+    const updated = await prisma.order.update({
+      where: { id },
+      data: { courierId, courierAssignedAt: new Date() },
+      include: ORDER_INCLUDE,
+    });
+
+    const product = order.items[0]?.product;
+    await prisma.notification.create({
+      data: {
+        userId: courierId,
+        title: 'Nouvelle collecte à effectuer',
+        message: product
+          ? `Récupérez et vérifiez "${product.title}" chez le vendeur, puis validez sur votre espace livreur.`
+          : 'Une nouvelle collecte vous a été assignée.',
+      },
+    });
+
+    return res.json({ success: true, order: updated });
+  } catch (err) {
+    console.error('Erreur assignCourier:', err);
+    return res.status(500).json({ success: false, message: 'Erreur serveur' });
+  }
+}
+
+// GET /api/orders/admin/couriers — réservé aux admins : liste des livreurs actifs,
+// pour peupler le sélecteur d'assignation.
+export async function listAvailableCouriers(req: AuthRequest, res: Response) {
+  try {
+    const admin = await isAdmin(req.user!.id);
+    if (!admin) {
+      return res.status(403).json({ success: false, message: 'Accès réservé aux administrateurs' });
+    }
+
+    const couriers = await prisma.user.findMany({
+      where: { role: 'COURIER' },
+      select: { id: true, name: true, avatar: true },
+      orderBy: { name: 'asc' },
+    });
+
+    return res.json({ success: true, data: couriers });
+  } catch (err) {
+    console.error('Erreur listAvailableCouriers:', err);
+    return res.status(500).json({ success: false, message: 'Erreur serveur' });
+  }
+}
+
+// GET /api/orders/admin/pending-assignment — réservé aux admins : commandes confirmées par
+// le vendeur mais pas encore assignées à un livreur (file de dispatch).
+export async function listPendingAssignment(req: AuthRequest, res: Response) {
+  try {
+    const admin = await isAdmin(req.user!.id);
+    if (!admin) {
+      return res.status(403).json({ success: false, message: 'Accès réservé aux administrateurs' });
+    }
+
+    const orders = await prisma.order.findMany({
+      where: { status: 'CONFIRMED', courierId: null },
+      include: COURIER_ORDER_INCLUDE,
+      orderBy: { confirmedAt: 'asc' },
+    });
+
+    return res.json({ success: true, data: orders });
+  } catch (err) {
+    console.error('Erreur listPendingAssignment:', err);
+    return res.status(500).json({ success: false, message: 'Erreur serveur' });
+  }
+}
+
+// GET /api/orders/courier/mine — alimente CourierQueue.tsx : tout ce qui a été assigné à
+// CE livreur (à vérifier ou déjà traité récemment), le plus ancien d'abord pour les commandes
+// en attente afin de prioriser les collectes les plus urgentes.
+export async function getCourierOrders(req: AuthRequest, res: Response) {
+  try {
+    const courierId = req.user!.id;
+    const role = await getUserRole(courierId);
+    if (role !== 'COURIER' && role !== 'ADMIN' && role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ success: false, message: 'Accès réservé aux livreurs CBFSOKO' });
+    }
+
+    const orders = await prisma.order.findMany({
+      where: { courierId },
+      include: COURIER_ORDER_INCLUDE,
+      orderBy: { courierAssignedAt: 'desc' },
+    });
+
+    return res.json({ success: true, data: orders });
+  } catch (err) {
+    console.error('Erreur getCourierOrders:', err);
     return res.status(500).json({ success: false, message: 'Erreur serveur' });
   }
 }

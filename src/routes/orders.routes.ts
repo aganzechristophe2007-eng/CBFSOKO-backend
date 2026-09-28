@@ -7,6 +7,10 @@ import {
   confirmOrder,
   denyOrder,
   verifyOrderByCourier,
+  assignCourier,
+  listAvailableCouriers,
+  listPendingAssignment,
+  getCourierOrders,
   getOrderPaymentSummary,
 } from '../controllers/orders.controller';
 
@@ -25,10 +29,18 @@ const deliveryRequestLimiter = rateLimit({
 
 router.get('/mine', getMyOrders);
 router.post('/delivery-request', deliveryRequestLimiter, createDeliveryRequest);
+
+// Espace livreur — l'autorisation fine (rôle COURIER, commande bien assignée à CE livreur)
+// est revérifiée en base dans chaque contrôleur, jamais fait confiance au JWT seul.
+router.get('/courier/mine', getCourierOrders);
+
+// Espace admin — dispatch manuel des commandes confirmées vers un livreur.
+router.get('/admin/couriers', listAvailableCouriers);
+router.get('/admin/pending-assignment', listPendingAssignment);
+
 router.patch('/:id/confirm', confirmOrder);
 router.patch('/:id/deny', denyOrder);
-// Réservé côté controller aux rôles COURIER/ADMIN (revérifié en base à chaque appel) ;
-// requireAuth suffit ici, l'autorisation fine se fait dans verifyOrderByCourier.
+router.patch('/:id/assign-courier', assignCourier);
 router.patch('/:id/verify', verifyOrderByCourier);
 router.get('/:id/payment-summary', getOrderPaymentSummary);
 

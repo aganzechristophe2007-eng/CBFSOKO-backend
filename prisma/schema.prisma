@@ -144,8 +144,9 @@ model Order {
   deliveryAddress String?
   expiresAt       DateTime? // fin du delai de 12h laisse au vendeur pour confirmer
   confirmedAt     DateTime? // horodatage de la confirmation du vendeur (statut CONFIRMED)
-  courierId          String? // livreur CBFSOKO ayant pris en charge la verification terrain
-  verifiedAt         DateTime? // horodatage du passage en COURIER_VERIFIED
+  courierId          String? // livreur CBFSOKO assigne par un admin pour cette collecte
+  courierAssignedAt  DateTime? // horodatage de l'assignation manuelle par un admin (avant verification)
+  verifiedAt         DateTime? // horodatage du passage en COURIER_VERIFIED (verification effective)
   verificationNote   String? // remarque libre du livreur (etat, conformite)
   verificationPhotos String[] @default([]) // photos prises par le livreur a la recuperation
   createdAt       DateTime      @default(now())
