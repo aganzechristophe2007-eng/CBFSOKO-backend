@@ -6,6 +6,9 @@ import { AuthRequest, JWT_SECRET } from '../middleware/auth.middleware';
 
 const TOKEN_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // doit correspondre à expiresIn: '30d' du JWT
 
+// Hash factice pour comparer en durée constante quand l'email n'existe pas (anti timing attack)
+const DUMMY_HASH = bcrypt.hashSync('mot-de-passe-factice-anti-timing', 12);
+
 // Pose le cookie de session lu par socket.service.ts (io.use -> handshake.headers.cookie ->
 // parsed.token) pour authentifier la connexion websocket. Sans ce cookie, aucun socket ne
 // s'authentifie jamais : ni les messages en temps réel, ni la signalisation d'appel ne
@@ -73,46 +76,16 @@ export async function login(req: AuthRequest, res: Response) {
     const cleanEmail = email.toLowerCase().trim();
 
     // 1. VÉRIFICATION RÉELLE DANS LA BASE DE DONNÉES
-    let user = await prisma.user.findUnique({
+    const user = await prisma.user.findUnique({
       where: { email: cleanEmail },
       include: { wallet: true }
     });
 
-    // 2. SI LE COMPTE N'EXISTE PAS -> CRÉATION AUTOMATIQUE INTELLIGENTE (Expérience 1M+ utilisateurs)
-    if (!user) {
-      if (password.length < 8) {
-        return res.status(400).json({
-          message: 'Ce compte n\'existe pas. Entrez un mot de passe d\'au moins 8 caractères pour le créer instantanément.'
-        });
-      }
-
-      const hashed = await bcrypt.hash(password, 12);
-      const defaultName = cleanEmail.split('@')[0];
-
-      user = await prisma.$transaction(async (tx) => {
-        const newUser = await tx.user.create({
-          data: {
-            name: defaultName.charAt(0).toUpperCase() + defaultName.slice(1),
-            email: cleanEmail,
-            password: hashed,
-          },
-        });
-
-        await tx.wallet.create({ data: { userId: newUser.id } });
-
-        return await tx.user.findUnique({
-          where: { id: newUser.id },
-          include: { wallet: true }
-        });
-      });
-
-      console.log(`✨ Nouveau compte créé à la volée pour : ${cleanEmail}`);
-    } else {
-      // 3. SI LE COMPTE EXISTE -> VÉRIFICATION DU MOT DE PASSE
-      const valid = await bcrypt.compare(password, user!.password);
-      if (!valid) {
-        return res.status(401).json({ message: 'Identifiants invalides' });
-      }
+    // 2. Aucune création automatique de compte : l'inscription passe uniquement par register().
+    // On compare toujours un hash (même durée que l'email existe ou non) avec un message identique.
+    const valid = await bcrypt.compare(String(password), user?.password ?? DUMMY_HASH);
+    if (!user || !valid) {
+      return res.status(401).json({ message: 'Identifiants invalides' });
     }
 
     // 4. GÉNÉRATION DU TOKEN JWT, POSE DU COOKIE DE SESSION ET RETOUR DE LA SESSION SÉCURISÉE

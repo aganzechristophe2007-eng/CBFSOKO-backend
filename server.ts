@@ -25,6 +25,7 @@ import cloudinary from './src/config/cloudinary';
 import messagesRouter from './src/routes/messages.routes';
 import cartRouter from './src/routes/cart.routes';
 import ordersRouter from './src/routes/orders.routes';
+import adminSellerRouter from './src/routes/admin-seller.routes';
 import { sweepExpiredOrders } from './src/controllers/orders.controller';
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
@@ -85,6 +86,7 @@ app.use('/uploads', express.static(UPLOADS_ROOT, { maxAge: '30d', immutable: tru
 app.use('/api/messages', messagesRouter);
 app.use('/api/cart', cartRouter);
 app.use('/api/orders', ordersRouter);
+app.use('/api/admin-seller', adminSellerRouter);
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
