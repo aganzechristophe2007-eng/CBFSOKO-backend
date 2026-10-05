@@ -29,9 +29,8 @@ import adminSellerRouter from './src/routes/admin-seller.routes';
 import { sweepExpiredOrders } from './src/controllers/orders.controller';
 import paymentsRouter from './src/routes/payments.routes';
 import { sweepPendingPayments } from './src/controllers/payments.controller';
-
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
-
+import settingsAccountRouter from './src/routes/settings.account.routes';
 const prisma = new PrismaClient();
 const app = express();
 
@@ -107,14 +106,14 @@ app.use('/uploads', express.static(UPLOADS_ROOT, { maxAge: '30d', immutable: tru
 
 // ==========================================
 // ROUTERS SÉPARÉS (messagerie, panier, commandes/livraison)
-// N'existaient auparavant que comme fichiers isolés, jamais montés : sans ces 3 lignes,
-// /api/messages, /api/cart et /api/orders ne répondent à rien.
+
 // ==========================================
 app.use('/api/messages', messagesRouter);
 app.use('/api/cart', cartRouter);
 app.use('/api/orders', ordersRouter);
 app.use('/api/payments', paymentsRouter);
 app.use('/api/admin-seller', adminSellerRouter);
+app.use('/api/settings/account', settingsAccountRouter);
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
