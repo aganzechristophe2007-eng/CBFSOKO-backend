@@ -1,12 +1,11 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
-import { Payment } from '@prisma/client';
+import type { Payment } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { calculateDeliveryFeeCDF, cdfToUsd, PLATFORM_COMMISSION_RATE } from './orders.controller';
 import {
   WonyaPayError,
-  ProviderStatus,
   buildCallbackUrl,
   generateRefTransa,
   getTransactionStatus,
@@ -16,7 +15,8 @@ import {
   mapProviderStatus,
   maskMobileNumber,
   normalizeMobileNumber,
-} from '../services/wonyapay.service';
+} from '../services/Wonyapay.service';
+import type { ProviderStatus } from '../services/Wonyapay.service';
 
 // ==========================================
 // PAIEMENT WONYAPAY — principes de sécurité
