@@ -2,7 +2,7 @@ import { Router, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import rateLimit from 'express-rate-limit';
 import { JWT_SECRET, requireAuth, requireRole, AuthRequest } from '../middleware/auth.middleware';
-import { getDashboard } from '../controllers/admin-seller.controller';
+import { getDashboard, updateOrderStatus } from '../controllers/admin-seller.controller';
 
 const router = Router();
 
@@ -16,6 +16,17 @@ const adminLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => `admin-seller:${(req as AuthRequest).user?.id ?? req.ip}`,
+  handler: (_req, res) =>
+    res.status(429).json({ success: false, error: 'Trop de requêtes.', message: 'Trop de requêtes.' }),
+});
+
+// 1 bis. Limite plus stricte pour les actions qui modifient des données
+const adminActionLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `admin-seller-action:${(req as AuthRequest).user?.id ?? req.ip}`,
   handler: (_req, res) =>
     res.status(429).json({ success: false, error: 'Trop de requêtes.', message: 'Trop de requêtes.' }),
 });
@@ -62,6 +73,17 @@ router.get(
   requireFreshAdminSession,
   adminLimiter,
   getDashboard,
+);
+
+// Changement de statut d'une commande (Vérifiée / Annulée) : mêmes protections que le tableau de bord
+router.patch(
+  '/orders/:id/status',
+  requireAuth,
+  logDenied,
+  requireRole(...ADMIN_ROLES),
+  requireFreshAdminSession,
+  adminActionLimiter,
+  updateOrderStatus,
 );
 
 export default router;

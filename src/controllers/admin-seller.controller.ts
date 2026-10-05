@@ -1,4 +1,5 @@
 import { Response } from 'express';
+import { z } from 'zod';
 import { OrderStatus, Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { AuthRequest } from '../middleware/auth.middleware';
@@ -291,5 +292,163 @@ export async function getDashboard(req: AuthRequest, res: Response) {
     return res
       .status(500)
       .json({ success: false, error: 'Erreur serveur.', message: 'Erreur serveur.' });
+  }
+}
+
+
+// ==========================================
+// PATCH /api/admin-seller/orders/:id/status
+// ==========================================
+// Changements de statut manuels autorisés pour un administrateur.
+// SHIPPED et DELIVERED sont volontairement absents : ils sont posés par le paiement confirmé et par la
+// livraison (versement au vendeur), jamais à la main. EXPIRED est posé automatiquement par le délai de 12h.
+const ADMIN_TRANSITIONS: Record<'COURIER_VERIFIED' | 'CANCELLED', OrderStatus[]> = {
+  COURIER_VERIFIED: [OrderStatus.CONFIRMED],
+  CANCELLED: [
+    OrderStatus.PENDING,
+    OrderStatus.AWAITING_SELLER_CONFIRMATION,
+    OrderStatus.CONFIRMED,
+    OrderStatus.COURIER_VERIFIED,
+  ],
+};
+
+const orderIdSchema = z.string().min(10).max(40).regex(/^[a-z0-9]+$/i);
+const updateStatusSchema = z
+  .object({
+    status: z.enum(['COURIER_VERIFIED', 'CANCELLED']),
+    note: z.string().trim().max(300).optional(),
+  })
+  .strict();
+
+export async function updateOrderStatus(req: AuthRequest, res: Response) {
+  try {
+    const idParsed = orderIdSchema.safeParse(req.params.id);
+    if (!idParsed.success) return res.status(404).json({ success: false, message: 'Commande introuvable.' });
+    const parsed = updateStatusSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json({ success: false, message: 'Requête invalide.' });
+
+    const orderId = idParsed.data;
+    const { status: target, note } = parsed.data;
+    const admin = req.user!;
+
+    // Verrou sur la commande : le paiement et ce changement de statut ne peuvent pas se croiser.
+    const result = await prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
+
+        const order = await tx.order.findUnique({
+          where: { id: orderId },
+          select: {
+            status: true,
+            paidAt: true,
+            buyerId: true,
+            verificationNote: true,
+            items: { select: { product: { select: { title: true, isSold: true, sellerId: true } } } },
+          },
+        });
+        if (!order) return { kind: 'not_found' as const };
+        if (order.paidAt) return { kind: 'paid' as const };
+        if (!ADMIN_TRANSITIONS[target].includes(order.status)) return { kind: 'bad_transition' as const };
+
+        if (target === 'COURIER_VERIFIED' && (order.items.length === 0 || order.items.some((it) => it.product.isSold))) {
+          return { kind: 'unavailable' as const };
+        }
+        if (target === 'CANCELLED') {
+          const activePayment = await tx.payment.findFirst({
+            where: { orderId, status: { in: ['PENDING', 'SUCCESS'] } },
+            select: { id: true },
+          });
+          if (activePayment) return { kind: 'payment_active' as const };
+        }
+
+        const now = new Date();
+        const adminNote = `[Admin ${admin.name}] ${note || 'Vérification validée depuis le tableau de bord.'}`;
+        const data: Prisma.OrderUpdateManyMutationInput =
+          target === 'COURIER_VERIFIED'
+            ? {
+                status: OrderStatus.COURIER_VERIFIED,
+                verifiedAt: now,
+                verificationNote: order.verificationNote ? `${order.verificationNote}\n${adminNote}` : adminNote,
+              }
+            : { status: OrderStatus.CANCELLED };
+
+        // La condition sur l'ancien statut et paidAt garantit qu'aucune autre écriture n'est écrasée.
+        const updated = await tx.order.updateMany({
+          where: { id: orderId, paidAt: null, status: order.status },
+          data,
+        });
+        if (updated.count !== 1) return { kind: 'bad_transition' as const };
+
+        return {
+          kind: 'ok' as const,
+          from: order.status,
+          buyerId: order.buyerId,
+          sellerIds: [...new Set(order.items.map((it) => it.product.sellerId))],
+          productTitle: order.items[0]?.product.title ?? 'votre article',
+        };
+      },
+      { timeout: 10_000 },
+    );
+
+    switch (result.kind) {
+      case 'not_found':
+        return res.status(404).json({ success: false, message: 'Commande introuvable.' });
+      case 'paid':
+        return res.status(409).json({ success: false, message: 'Cette commande est déjà payée : son statut ne peut plus être modifié ici.' });
+      case 'bad_transition':
+        return res.status(409).json({ success: false, message: "Ce changement de statut n'est pas autorisé pour l'état actuel de la commande." });
+      case 'unavailable':
+        return res.status(409).json({ success: false, message: "Un article de cette commande n'est plus disponible." });
+      case 'payment_active':
+        return res.status(409).json({ success: false, message: 'Un paiement est en cours ou confirmé pour cette commande : annulation impossible.' });
+    }
+
+    // Journal d'audit : qui a changé quoi, et quand.
+    console.info(
+      JSON.stringify({
+        event: 'admin_order_status_changed',
+        adminId: admin.id,
+        orderId,
+        from: result.from,
+        to: target,
+        at: new Date().toISOString(),
+      }),
+    );
+
+    // Notifications : au mieux, un échec ici n'annule pas le changement de statut.
+    try {
+      const notifications =
+        target === 'COURIER_VERIFIED'
+          ? [
+              {
+                userId: result.buyerId,
+                title: 'Commande vérifiée',
+                message: `Votre article « ${result.productTitle} » a été vérifié. Vous pouvez maintenant payer votre commande.`,
+              },
+            ]
+          : [
+              {
+                userId: result.buyerId,
+                title: 'Commande annulée',
+                message: `Votre commande « ${result.productTitle} » a été annulée par l'administration. Contactez le support pour plus d'informations.`,
+              },
+              ...result.sellerIds
+                .filter((id) => id !== result.buyerId)
+                .map((id) => ({
+                  userId: id,
+                  title: 'Commande annulée',
+                  message: `Une commande portant sur « ${result.productTitle} » a été annulée par l'administration.`,
+                })),
+            ];
+      await prisma.notification.createMany({ data: notifications });
+    } catch (e: any) {
+      console.error('Notification changement de statut:', e?.message || e);
+    }
+
+    res.set('Cache-Control', 'no-store');
+    return res.json({ success: true, data: { id: orderId, status: target } });
+  } catch (err: any) {
+    console.error('Erreur admin-seller updateOrderStatus:', err?.message || err);
+    return res.status(500).json({ success: false, message: 'Erreur serveur.' });
   }
 }
