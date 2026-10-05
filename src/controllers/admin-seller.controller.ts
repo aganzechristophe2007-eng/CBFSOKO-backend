@@ -96,6 +96,7 @@ export async function getDashboard(req: AuthRequest, res: Response) {
       ordersAwaitingSeller,
       shopsUnverified,
       attentionRows,
+      verifiedRows,
       recentRows,
       shops,
       shopsTotal,
@@ -127,7 +128,15 @@ export async function getDashboard(req: AuthRequest, res: Response) {
         take: 30,
         select: orderSelect,
       }),
-      prisma.order.findMany({ orderBy: { createdAt: 'desc' }, take: 30, select: orderSelect }),
+      // Commandes déclarées vérifiées, en attente de paiement : elles restent visibles côté admin
+      prisma.order.findMany({
+        where: { status: OrderStatus.COURIER_VERIFIED, paidAt: null },
+        orderBy: { updatedAt: 'desc' },
+        take: 30,
+        select: orderSelect,
+      }),
+      // Triées par dernière activité : une commande qui vient de changer de statut reste en haut de la liste
+      prisma.order.findMany({ orderBy: { updatedAt: 'desc' }, take: 50, select: orderSelect }),
       prisma.shop.findMany({
         orderBy: { createdAt: 'desc' },
         take: 100,
@@ -257,6 +266,7 @@ export async function getDashboard(req: AuthRequest, res: Response) {
           totalRevenueCDF: revenue._sum.totalCDF ?? 0,
         },
         attentionOrders: attentionRows.map(toOrderDto),
+        verifiedOrders: verifiedRows.map(toOrderDto),
         recentOrders: recentRows.map(toOrderDto),
         shops: {
           total: shopsTotal,
