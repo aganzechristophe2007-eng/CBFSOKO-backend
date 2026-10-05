@@ -38,6 +38,7 @@ model User {
   shop             Shop?
   transactions     Transaction[]
   wallet           Wallet?
+  payments         Payment[]
 
   @@index([email])
 }
@@ -149,6 +150,7 @@ model Order {
   verifiedAt         DateTime? // horodatage du passage en COURIER_VERIFIED (verification effective)
   verificationNote   String? // remarque libre du livreur (etat, conformite)
   verificationPhotos String[] @default([]) // photos prises par le livreur a la recuperation
+  paidAt             DateTime? // horodatage de la confirmation du paiement (verifie aupres de WonyaPay)
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
   buyer           User          @relation("BuyerOrders", fields: [buyerId], references: [id])
@@ -157,6 +159,7 @@ model Order {
   items           OrderItem[]
   review          SellerReview?
   messages        Message[]
+  payments        Payment[]
 
   @@index([buyerId])
   @@index([sellerId])
@@ -164,15 +167,15 @@ model Order {
   @@index([status, expiresAt])
 }
 
-// Note du vendeur laissÃƒÆ’Ã‚Â©e par un acheteur. CrÃƒÆ’Ã‚Â©ÃƒÆ’Ã‚Â©e uniquement cÃƒÆ’Ã‚Â´tÃƒÆ’Ã‚Â© serveur
-// aprÃƒÆ’Ã‚Â¨s vÃƒÆ’Ã‚Â©rification qu'une commande LIVRÃƒÆ’Ã¢â‚¬Â°E existe entre l'acheteur et ce
-// vendeur (voir createSellerReview) : impossible de noter sans avoir achetÃƒÆ’Ã‚Â©.
+// Note du vendeur laissÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©e par un acheteur. CrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©e uniquement cÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â´tÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© serveur
+// aprÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨s vÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©rification qu'une commande LIVRÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°E existe entre l'acheteur et ce
+// vendeur (voir createSellerReview) : impossible de noter sans avoir achetÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©.
 model SellerReview {
   id        String   @id @default(cuid())
   sellerId  String
   buyerId   String
   orderId   String   @unique
-  rating    Int // 1 ÃƒÆ’Ã‚Â  5, validÃƒÆ’Ã‚Â© cÃƒÆ’Ã‚Â´tÃƒÆ’Ã‚Â© serveur
+  rating    Int // 1 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  5, validÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© cÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â´tÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© serveur
   comment   String?
   createdAt DateTime @default(now())
   seller    User     @relation("SellerReviewsReceived", fields: [sellerId], references: [id], onDelete: Cascade)
@@ -205,14 +208,14 @@ model Reel {
   seller    User     @relation(fields: [sellerId], references: [id], onDelete: Cascade)
 }
 
-// Une vue par identitÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© (utilisateur connectÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© OU visiteur anonyme) et par jour, pour un reel donnÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©.
-// On s'appuie sur Product (et non sur le modÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨le Reel) car c'est Product.id qui identifie
-// rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ellement un reel cÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â´tÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© frontend (Home.tsx construit les reels ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  partir des produits avec videoUrl).
+// Une vue par identitÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© (utilisateur connectÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© OU visiteur anonyme) et par jour, pour un reel donnÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©.
+// On s'appuie sur Product (et non sur le modÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨le Reel) car c'est Product.id qui identifie
+// rÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©ellement un reel cÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â´tÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© frontend (Home.tsx construit les reels ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â  partir des produits avec videoUrl).
 model ReelView {
   id          String   @id @default(cuid())
   productId   String
   identityKey String // "user:<userId>" ou "visitor:<visitorId>"
-  day         String // "YYYY-MM-DD" (UTC) : sert de fenÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Âªtre d'unicitÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© quotidienne
+  day         String // "YYYY-MM-DD" (UTC) : sert de fenÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Âªtre d'unicitÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© quotidienne
   createdAt   DateTime @default(now())
   product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
 
@@ -250,11 +253,11 @@ model Message {
   senderId      String
   receiverId    String
   type          MessageType @default(TEXT)
-  content       String? // texte du message, ou lÃƒÂ©gende optionnelle pour un mÃƒÂ©dia
-  mediaUrl      String? // URL sÃƒÂ©curisÃƒÂ©e Cloudinary (image, audio ou vidÃƒÂ©o)
-  mediaPublicId String? // public_id Cloudinary, nÃƒÂ©cessaire pour une suppression future
-  mediaDuration Int? // durÃƒÂ©e en secondes (audio/vidÃƒÂ©o)
-  orderId       String? // renseignÃƒÂ© uniquement pour un message de type ORDER_REQUEST
+  content       String? // texte du message, ou lÃƒÆ’Ã‚Â©gende optionnelle pour un mÃƒÆ’Ã‚Â©dia
+  mediaUrl      String? // URL sÃƒÆ’Ã‚Â©curisÃƒÆ’Ã‚Â©e Cloudinary (image, audio ou vidÃƒÆ’Ã‚Â©o)
+  mediaPublicId String? // public_id Cloudinary, nÃƒÆ’Ã‚Â©cessaire pour une suppression future
+  mediaDuration Int? // durÃƒÆ’Ã‚Â©e en secondes (audio/vidÃƒÆ’Ã‚Â©o)
+  orderId       String? // renseignÃƒÆ’Ã‚Â© uniquement pour un message de type ORDER_REQUEST
   isRead        Boolean     @default(false)
   readAt        DateTime?
   createdAt     DateTime    @default(now())
@@ -344,7 +347,7 @@ model Feedback {
 
 enum Role {
   USER
-  COURIER // livreur CBFSOKO : rÃ©cupÃ¨re, vÃ©rifie et expÃ©die le produit aprÃ¨s confirmation du vendeur
+  COURIER // livreur CBFSOKO : rÃƒÂ©cupÃƒÂ¨re, vÃƒÂ©rifie et expÃƒÂ©die le produit aprÃƒÂ¨s confirmation du vendeur
   ADMIN
   ADMIN_FINANCE
   SUPER_ADMIN
@@ -383,4 +386,41 @@ enum TransactionStatus {
   PENDING
   COMPLETED
   FAILED
+}
+
+// ==========================================
+// PAIEMENTS (WonyaPay, collecte Mobile Money C2B)
+// ==========================================
+enum PaymentStatus {
+  PENDING // demande envoyee a WonyaPay, l'acheteur doit confirmer sur son telephone
+  SUCCESS // paiement confirme par WonyaPay ET verifie cote serveur (jamais sur la seule foi d'un callback)
+  FAILED // refuse, annule ou echoue (definitif)
+  EXPIRED // delai depasse sans confirmation ; re-verifie pendant 24h au cas ou un paiement tardif aboutirait
+}
+
+model Payment {
+  id                    String        @id @default(cuid())
+  orderId               String
+  userId                String
+  refTransa             String        @unique // reference de 20 caracteres envoyee a WonyaPay, unique par tentative
+  providerTransactionId String? // transactionId renvoye par WonyaPay a l'initiation
+  amount                Float // montant demande (Montant), calcule cote serveur uniquement
+  currency              String // CDF ou USD
+  phoneMasked           String // numero Mobile Money masque (jamais stocke en clair)
+  feeAmount             Float? // frais annonces par WonyaPay
+  totalCharged          Float? // montantTotal annonce par WonyaPay
+  network               String?
+  status                PaymentStatus @default(PENDING)
+  failureCode           String?
+  refundRequired        Boolean       @default(false) // argent encaisse mais commande non payable : remboursement manuel a traiter
+  lastCheckedAt         DateTime?
+  confirmedAt           DateTime?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+  order                 Order         @relation(fields: [orderId], references: [id])
+  user                  User          @relation(fields: [userId], references: [id])
+
+  @@index([orderId, createdAt])
+  @@index([userId])
+  @@index([status, createdAt])
 }

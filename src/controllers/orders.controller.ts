@@ -8,14 +8,14 @@ const DELIVERY_TIMEOUT_MS = 12 * 60 * 60 * 1000; // 12 heures max laissées au v
 const SIMILAR_PRODUCTS_LIMIT = 6;
 
 // Commission de la plateforme sur le prix du produit (hors livraison).
-const PLATFORM_COMMISSION_RATE = 0.03; // 3%
+export const PLATFORM_COMMISSION_RATE = 0.03; // 3%
 
 // Barème de livraison, basé sur le poids total de l'envoi (poids unitaire × quantité).
 // Standard "palier progressif" utilisé par la plupart des services de livraison locaux :
 // un minimum forfaitaire pour les petits colis, puis un tarif au kg qui augmente par
 // palier pour les envois lourds (le transport de charges lourdes coûte plus cher au kg,
 // pas seulement proportionnellement).
-function calculateDeliveryFeeCDF(unitWeightKg: number | null | undefined, quantity: number): number {
+export function calculateDeliveryFeeCDF(unitWeightKg: number | null | undefined, quantity: number): number {
   const safeWeight = unitWeightKg && unitWeightKg > 0 ? unitWeightKg : 1; // défaut si non renseigné
   const safeQuantity = quantity > 0 ? quantity : 1;
   const totalWeight = safeWeight * safeQuantity;
@@ -35,7 +35,7 @@ function calculateDeliveryFeeCDF(unitWeightKg: number | null | undefined, quanti
 // Convertit un montant CDF en USD en réutilisant le taux réel de CETTE commande
 // (order.totalCDF / order.totalUSD), pour rester cohérent avec le prix affiché au client
 // plutôt que d'appliquer un taux global qui pourrait diverger.
-function cdfToUsd(amountCDF: number, order: { totalUSD: number; totalCDF: number }): number {
+export function cdfToUsd(amountCDF: number, order: { totalUSD: number; totalCDF: number }): number {
   const rate = order.totalUSD > 0 && order.totalCDF > 0 ? order.totalCDF / order.totalUSD : 2300;
   return Math.round((amountCDF / rate) * 100) / 100;
 }

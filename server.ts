@@ -27,6 +27,8 @@ import cartRouter from './src/routes/cart.routes';
 import ordersRouter from './src/routes/orders.routes';
 import adminSellerRouter from './src/routes/admin-seller.routes';
 import { sweepExpiredOrders } from './src/controllers/orders.controller';
+import paymentsRouter from './src/routes/payments.routes';
+import { sweepPendingPayments } from './src/controllers/payments.controller';
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
@@ -67,12 +69,37 @@ const AVATARS_DIR = path.join(UPLOADS_ROOT, 'avatars');
 app.use(compression()); // Réponses JSON compressées (gzip) : ~5 à 10x plus légères
 // Sans ça, helmet bloque l'affichage des images/vidéos servies depuis un autre port (5000 -> 5173).
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+// 🔒 Origines autorisées : FRONTEND_URL, une ou plusieurs URL séparées par des virgules.
+// Avant : sans FRONTEND_URL, TOUTES les origines étaient acceptées avec les cookies de session
+// (n'importe quel site pouvait agir au nom d'un utilisateur connecté). Désormais, en production
+// (Render définit RENDER=true), l'absence de FRONTEND_URL bloque toute origine externe.
+const normalizeOrigin = (o: string) => o.trim().replace(/\/+$/, '');
+const ALLOWED_ORIGINS = (process.env.FRONTEND_URL || '').split(',').map(normalizeOrigin).filter(Boolean);
+const IS_PRODUCTION = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
+if (IS_PRODUCTION && ALLOWED_ORIGINS.length === 0) {
+  console.error('⛔ FRONTEND_URL manquant en production : toutes les requêtes cross-origin sont refusées. Définis-le sur Render (ex: https://ton-site.vercel.app).');
+}
+const isOriginAllowed = (origin?: string): boolean => {
+  if (!origin) return true; // requêtes sans en-tête Origin (même origine, outils serveur)
+  if (ALLOWED_ORIGINS.length > 0) return ALLOWED_ORIGINS.includes(normalizeOrigin(origin));
+  return !IS_PRODUCTION; // développement local uniquement
+};
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || true, // 👉 en production, mets l'URL exacte de ton frontend
+    origin: (origin, callback) => callback(null, isOriginAllowed(origin)),
     credentials: true, // Indispensable pour l'échange de cookies HttpOnly cross-origin
   })
 );
+// 🔒 Anti-CSRF : le cookie de session est en SameSite=None, donc un site tiers pourrait déclencher
+// une requête qui modifie des données (notamment multipart, qui évite le contrôle CORS préalable).
+// Toute requête qui modifie des données doit venir d'une origine autorisée.
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+  if (!isOriginAllowed(req.headers.origin)) {
+    return res.status(403).json({ success: false, error: 'Origine non autorisée.' });
+  }
+  next();
+});
 app.use(express.json({ limit: '2mb' })); // Plus de base64 en JSON : 2mb suffit largement
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 app.use(cookieParser());
@@ -86,6 +113,7 @@ app.use('/uploads', express.static(UPLOADS_ROOT, { maxAge: '30d', immutable: tru
 app.use('/api/messages', messagesRouter);
 app.use('/api/cart', cartRouter);
 app.use('/api/orders', ordersRouter);
+app.use('/api/payments', paymentsRouter);
 app.use('/api/admin-seller', adminSellerRouter);
 
 const authLimiter = rateLimit({
@@ -1499,6 +1527,13 @@ if (process.env.NODE_ENV !== 'production') {
 setInterval(() => {
   sweepExpiredOrders().catch((err) => console.error('Erreur sweepExpiredOrders:', err));
 }, 5 * 60 * 1000);
+
+// 💳 Rattrape les paiements WonyaPay dont le callback ne serait jamais arrivé (service en veille,
+// réseau coupé...) en redemandant leur statut réel à WonyaPay. Complète le callback et la vérification
+// faite quand l'acheteur consulte la page de paiement.
+setInterval(() => {
+  sweepPendingPayments().catch((err) => console.error('Erreur sweepPendingPayments:', err));
+}, 30 * 1000);
 
 // 🔌 Un seul serveur HTTP pour Express ET Socket.io : sans ça, /socket.io/
 // n'existe nulle part et toute tentative de connexion échoue en 404.
