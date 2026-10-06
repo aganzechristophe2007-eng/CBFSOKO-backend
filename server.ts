@@ -113,7 +113,7 @@ app.use('/api/cart', cartRouter);
 app.use('/api/orders', ordersRouter);
 app.use('/api/payments', paymentsRouter);
 app.use('/api/admin-seller', adminSellerRouter);
-app.use('/api/settings/account', settingsAccountRouter);
+app.use('/api/settings', settingsAccountRouter);
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,

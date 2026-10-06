@@ -234,3 +234,47 @@ export function mapProviderStatus(raw: string): 'SUCCESS' | 'FAILED' | 'PENDING'
   if (FAILURE_STATUSES.has(v)) return 'FAILED';
   return 'PENDING';
 }
+
+
+// ==========================================================================
+// DIAGNOSTIC (réservé aux administrateurs) : teste comment WonyaPay accepte le token.
+// Envoie un corps VIDE à POST /payment : aucune transaction ne peut être créée, seule
+// l'authentification est vérifiée (401 = token refusé ; 400/422 = token accepté).
+// Ne renvoie que des codes HTTP et un court message, jamais le token.
+// ==========================================================================
+export async function probeAuthVariants(): Promise<Record<string, { status: number | string; message: string }>> {
+  const s = settings();
+  const variants: Record<string, Record<string, string>> = {
+    'sans_token (référence)': {},
+    'Authorization: Bearer <token>': { Authorization: `Bearer ${s.token}` },
+    'Authorization: <token>': { Authorization: s.token },
+    'x-api-key: <token>': { 'x-api-key': s.token },
+  };
+  const out: Record<string, { status: number | string; message: string }> = {};
+  for (const [name, extra] of Object.entries(variants)) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15_000);
+    try {
+      const res = await fetch(`${s.baseUrl}/payment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...extra },
+        body: '{}',
+        signal: controller.signal,
+        redirect: 'error',
+      });
+      let message = '';
+      try {
+        const j: any = await res.json();
+        message = typeof j?.message === 'string' ? j.message.slice(0, 120) : '';
+      } catch {
+        // pas de JSON
+      }
+      out[name] = { status: res.status, message };
+    } catch (err: any) {
+      out[name] = { status: 'erreur réseau', message: err?.name === 'AbortError' ? 'Délai dépassé' : 'Injoignable' };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return out;
+}
