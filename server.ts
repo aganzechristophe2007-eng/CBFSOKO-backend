@@ -28,6 +28,7 @@ import ordersRouter from './src/routes/orders.routes';
 import adminSellerRouter from './src/routes/admin-seller.routes';
 import { sweepExpiredOrders } from './src/controllers/orders.controller';
 import paymentsRouter from './src/routes/payments.routes';
+import wonyapayDiagnosticRouter from './src/routes/wonyapay.diagnostic.routes';
 import { sweepPendingPayments } from './src/controllers/payments.controller';
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 import settingsAccountRouter from './src/routes/settings.account.routes';
@@ -111,6 +112,7 @@ app.use('/uploads', express.static(UPLOADS_ROOT, { maxAge: '30d', immutable: tru
 app.use('/api/messages', messagesRouter);
 app.use('/api/cart', cartRouter);
 app.use('/api/orders', ordersRouter);
+app.use('/api/payments/diagnostic', wonyapayDiagnosticRouter); // doit rester AVANT /api/payments
 app.use('/api/payments', paymentsRouter);
 app.use('/api/admin-seller', adminSellerRouter);
 app.use('/api/settings', settingsAccountRouter);
