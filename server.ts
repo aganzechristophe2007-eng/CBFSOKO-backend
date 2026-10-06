@@ -30,6 +30,8 @@ import { sweepExpiredOrders } from './src/controllers/orders.controller';
 import paymentsRouter from './src/routes/payments.routes';
 import wonyapayDiagnosticRouter from './src/routes/wonyapay.diagnostic.routes';
 import { sweepPendingPayments } from './src/controllers/payments.controller';
+import walletRouter from './src/routes/wallet.routes';
+import { sweepWalletOperations } from './src/services/walletLedger.service';
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 import settingsAccountRouter from './src/routes/settings.account.routes';
 const prisma = new PrismaClient();
@@ -114,6 +116,7 @@ app.use('/api/cart', cartRouter);
 app.use('/api/orders', ordersRouter);
 app.use('/api/payments/diagnostic', wonyapayDiagnosticRouter); // doit rester AVANT /api/payments
 app.use('/api/payments', paymentsRouter);
+app.use('/api/wallet', walletRouter);
 app.use('/api/admin-seller', adminSellerRouter);
 app.use('/api/settings', settingsAccountRouter);
 
@@ -1534,6 +1537,11 @@ setInterval(() => {
 // faite quand l'acheteur consulte la page de paiement.
 setInterval(() => {
   sweepPendingPayments().catch((err) => console.error('Erreur sweepPendingPayments:', err));
+}, 30 * 1000);
+
+// 👛 Rattrape les dépôts et retraits du portefeuille dont le callback ne serait jamais arrivé.
+setInterval(() => {
+  sweepWalletOperations().catch((err) => console.error('Erreur sweepWalletOperations:', err));
 }, 30 * 1000);
 
 // 🔌 Un seul serveur HTTP pour Express ET Socket.io : sans ça, /socket.io/

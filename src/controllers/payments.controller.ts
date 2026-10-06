@@ -17,6 +17,7 @@ import {
   normalizeMobileNumber,
 } from '../services/Wonyapay.service';
 import type { ProviderStatus } from '../services/Wonyapay.service';
+import { reconcileDeposit } from '../services/walletLedger.service';
 
 // ==========================================
 // PAIEMENT WONYAPAY — principes de sécurité
@@ -72,7 +73,7 @@ const toPublic = (p: Payment) => ({
 
 // Même calcul que getOrderPaymentSummary (orders.controller.ts), avec les mêmes fonctions de base :
 // livraison selon le poids, commission de la plateforme, conversion USD au taux de cette commande.
-function computeGrandTotals(order: {
+export function computeGrandTotals(order: {
   totalUSD: number;
   totalCDF: number;
   items: { quantity: number; product: { weight: number | null } }[];
@@ -426,9 +427,15 @@ export async function wonyapayCallback(req: Request, res: Response) {
     let payment: Payment | null = null;
     if (paymentId) payment = await prisma.payment.findUnique({ where: { id: paymentId } });
     if (!payment && providerId) payment = await prisma.payment.findFirst({ where: { providerTransactionId: providerId } });
-    if (!payment) return;
+    if (payment) {
+      await reconcilePayment(payment.id, { force: true });
+      return;
+    }
 
-    await reconcilePayment(payment.id, { force: true });
+    // Pas un paiement de commande : peut-être un dépôt portefeuille (même adresse de callback).
+    let deposit = paymentId ? await prisma.walletDeposit.findUnique({ where: { id: paymentId } }) : null;
+    if (!deposit && providerId) deposit = await prisma.walletDeposit.findFirst({ where: { providerTransactionId: providerId } });
+    if (deposit) await reconcileDeposit(deposit.id, { force: true });
   } catch (err) {
     console.error('Erreur wonyapayCallback:', err);
   }
