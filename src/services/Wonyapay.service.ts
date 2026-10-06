@@ -32,12 +32,16 @@ export class WonyaPayError extends Error {
 }
 
 // Lues à chaque appel (et non au chargement) pour que les changements de configuration soient pris en compte.
+// Nettoie une valeur copiée à la main : espaces, retours à la ligne et guillemets en trop.
+const cleanEnv = (v: string | undefined): string => (v ?? '').trim().replace(/^["']+|["']+$/g, '').trim();
+
 const settings = () => ({
-  baseUrl: (process.env.WONYAPAY_BASE_URL || 'https://app-api.wonyasoft.com').replace(/\/+$/, ''),
-  token: process.env.WONYAPAY_TOKEN || '',
-  partnerId: process.env.WONYAPAY_PARTNER_ID || '',
-  callbackSecret: process.env.WONYAPAY_CALLBACK_SECRET || '',
-  publicApiUrl: (process.env.PUBLIC_API_URL || '').replace(/\/+$/, ''),
+  baseUrl: cleanEnv(process.env.WONYAPAY_BASE_URL || 'https://app-api.wonyasoft.com').replace(/\/+$/, ''),
+  // Si le préfixe « Bearer » a été collé avec le token, on le retire : il est ajouté par le code.
+  token: cleanEnv(process.env.WONYAPAY_TOKEN).replace(/^Bearer\s+/i, ''),
+  partnerId: cleanEnv(process.env.WONYAPAY_PARTNER_ID),
+  callbackSecret: cleanEnv(process.env.WONYAPAY_CALLBACK_SECRET),
+  publicApiUrl: cleanEnv(process.env.PUBLIC_API_URL).replace(/\/+$/, ''),
 });
 
 export function isWonyaPayConfigured(): boolean {
@@ -125,7 +129,11 @@ async function wonyaRequest(method: 'GET' | 'POST', path: string, body?: unknown
 // 404 caisse introuvable, 409 RefTransa en doublon, 422 règle métier, 500 erreur serveur, 503 indisponible.
 function mapHttpError(status: number, json: any): WonyaPayError {
   const detail = typeof json?.message === 'string' ? json.message.slice(0, 200) : `HTTP ${status}`;
-  if (status === 401) return new WonyaPayError('auth', `Token WonyaPay invalide : ${detail}`, status, true);
+  if (status === 401) {
+    // Aide au diagnostic sans jamais écrire le token : seule sa longueur est indiquée.
+    console.error(`[WonyaPay] 401 reçu — longueur du token configuré : ${settings().token.length} caractères.`);
+    return new WonyaPayError('auth', `Token WonyaPay invalide : ${detail}`, status, true);
+  }
   if (status === 404) return new WonyaPayError('config', `Caisse WonyaPay introuvable : ${detail}`, status, true);
   if (status === 409) return new WonyaPayError('duplicate', `RefTransa déjà utilisée : ${detail}`, status, false);
   if (status === 400 || status === 422) return new WonyaPayError('invalid', detail, status, true);
