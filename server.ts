@@ -29,6 +29,7 @@ import adminSellerRouter from './src/routes/admin-seller.routes';
 import { sweepExpiredOrders } from './src/controllers/orders.controller';
 import paymentsRouter from './src/routes/payments.routes';
 import wonyapayDiagnosticRouter from './src/routes/wonyapay.diagnostic.routes';
+import aiRouter from './src/routes/ai.routes';
 import { sweepPendingPayments } from './src/controllers/payments.controller';
 import walletRouter from './src/routes/wallet.routes';
 import { sweepWalletOperations } from './src/services/walletLedger.service';
@@ -119,6 +120,7 @@ app.use('/api/payments', paymentsRouter);
 app.use('/api/wallet', walletRouter);
 app.use('/api/admin-seller', adminSellerRouter);
 app.use('/api/settings', settingsAccountRouter);
+app.use('/api/ai', aiRouter);
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
