@@ -23,104 +23,143 @@ async function usage(userId: string) {
 }
 
 export async function getModels(req: Request, res: Response) {
-  const models = await listModels();
-  res.json({ models, usage: await usage(getUserId(req)) });
+  try {
+    const models = await listModels();
+    res.json({ models, usage: await usage(getUserId(req)) });
+  } catch (err: any) {
+    console.error("Erreur getModels:", err?.message);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
 }
 
 export async function listConversations(req: Request, res: Response) {
-  const items = await prisma.aiConversation.findMany({
-    where: { userId: getUserId(req) },
-    orderBy: { updatedAt: "desc" },
-    take: 50,
-    select: { id: true, title: true, updatedAt: true },
-  });
-  res.json({ conversations: items });
+  try {
+    const items = await prisma.aiConversation.findMany({
+      where: { userId: getUserId(req) },
+      orderBy: { updatedAt: "desc" },
+      take: 50,
+      select: { id: true, title: true, updatedAt: true },
+    });
+    res.json({ conversations: items });
+  } catch (err: any) {
+    console.error("Erreur listConversations:", err?.message);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
 }
 
 export async function getConversation(req: Request, res: Response) {
-  const conv = await prisma.aiConversation.findFirst({
-    where: { id: String(req.params.id), userId: getUserId(req) },
-    select: {
-      id: true,
-      model: true,
-      messages: {
-        orderBy: { createdAt: "asc" },
-        select: { id: true, role: true, content: true },
+  try {
+    const conv = await prisma.aiConversation.findFirst({
+      where: { id: String(req.params.id), userId: getUserId(req) },
+      select: {
+        id: true,
+        model: true,
+        messages: {
+          orderBy: { createdAt: "asc" },
+          select: { id: true, role: true, content: true },
+        },
       },
-    },
-  });
-  if (!conv) return res.status(404).json({ error: "Conversation introuvable" });
-  res.json(conv);
+    });
+    if (!conv) return res.status(404).json({ error: "Conversation introuvable" });
+    res.json(conv);
+  } catch (err: any) {
+    console.error("Erreur getConversation:", err?.message);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
 }
 
 export async function deleteConversation(req: Request, res: Response) {
-  const r = await prisma.aiConversation.deleteMany({
-    where: { id: String(req.params.id), userId: getUserId(req) },
-  });
-  if (r.count === 0) return res.status(404).json({ error: "Conversation introuvable" });
-  res.json({ ok: true });
+  try {
+    const r = await prisma.aiConversation.deleteMany({
+      where: { id: String(req.params.id), userId: getUserId(req) },
+    });
+    if (r.count === 0) return res.status(404).json({ error: "Conversation introuvable" });
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error("Erreur deleteConversation:", err?.message);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
 }
 
 export async function sendMessage(req: Request, res: Response) {
-  const userId = getUserId(req);
-  const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
-  if (!message || message.length > MAX_INPUT) {
-    return res.status(400).json({ error: `Message vide ou trop long (max ${MAX_INPUT} caracteres)` });
-  }
-
-  const models = await listModels();
-  if (!models.length) return res.status(503).json({ error: "Aucun modele disponible" });
-  const model = models.includes(req.body?.model) ? req.body.model : models[0];
-
-  const u = await usage(userId);
-  if (u.hourLeft === 0 || u.dayLeft === 0) {
-    return res.status(429).json({
-      error: u.hourLeft === 0 ? "Limite horaire atteinte, reessaie dans un moment" : "Limite du jour atteinte",
-      usage: u,
-    });
-  }
-
-  let convId: string;
-  if (typeof req.body?.conversationId === "string") {
-    const c = await prisma.aiConversation.findFirst({
-      where: { id: req.body.conversationId, userId },
-      select: { id: true },
-    });
-    if (!c) return res.status(404).json({ error: "Conversation introuvable" });
-    convId = c.id;
-  } else {
-    const c = await prisma.aiConversation.create({
-      data: { userId, model, title: message.slice(0, 60) },
-    });
-    convId = c.id;
-  }
-
-  const past = await prisma.aiMessage.findMany({
-    where: { conversationId: convId },
-    orderBy: { createdAt: "desc" },
-    take: HISTORY,
-    select: { role: true, content: true },
-  });
-  past.reverse();
-
-  await prisma.aiMessage.create({ data: { conversationId: convId, role: "user", content: message } });
-
   try {
-    const answer = await chat(model, [
-      { role: "system", content: SYSTEM_PROMPT },
-      ...past,
-      { role: "user", content: message },
-    ]);
+    const userId = getUserId(req);
+    const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
+    if (!message || message.length > MAX_INPUT) {
+      return res
+        .status(400)
+        .json({ error: `Message vide ou trop long (max ${MAX_INPUT} caracteres)` });
+    }
+
+    const models = await listModels();
+    if (!models.length) return res.status(503).json({ error: "Aucun modele disponible" });
+    const model = models.includes(req.body?.model) ? req.body.model : models[0];
+
+    const u = await usage(userId);
+    if (u.hourLeft === 0 || u.dayLeft === 0) {
+      return res.status(429).json({
+        error:
+          u.hourLeft === 0
+            ? "Limite horaire atteinte, reessaie dans un moment"
+            : "Limite du jour atteinte",
+        usage: u,
+      });
+    }
+
+    // Conversation existante ou nouvelle
+    let convId: string;
+    if (typeof req.body?.conversationId === "string") {
+      const c = await prisma.aiConversation.findFirst({
+        where: { id: req.body.conversationId, userId },
+        select: { id: true },
+      });
+      if (!c) return res.status(404).json({ error: "Conversation introuvable" });
+      convId = c.id;
+    } else {
+      const c = await prisma.aiConversation.create({
+        data: { userId, model, title: message.slice(0, 60) },
+      });
+      convId = c.id;
+    }
+
+    // Historique recent (le plus ancien en premier)
+    const past = await prisma.aiMessage.findMany({
+      where: { conversationId: convId },
+      orderBy: { createdAt: "desc" },
+      take: HISTORY,
+      select: { role: true, content: true },
+    });
+    past.reverse();
+
+    // Appel a l'IA AVANT d'enregistrer le message : si ca echoue, rien n'est consomme
+    let answer: string;
+    try {
+      answer = await chat(model, [
+        { role: "system", content: SYSTEM_PROMPT },
+        ...past,
+        { role: "user", content: message },
+      ]);
+    } catch (err: any) {
+      console.error("Erreur IA:", { model, message: err?.message });
+      return res.status(502).json({
+        error: "A30 IA est indisponible pour le moment",
+        conversationId: convId,
+      });
+    }
+
+    // Enregistrement du message utilisateur puis de la reponse
+    await prisma.aiMessage.create({
+      data: { conversationId: convId, role: "user", content: message },
+    });
     const saved = await prisma.aiMessage.create({
       data: { conversationId: convId, role: "assistant", content: answer },
       select: { id: true, role: true, content: true },
     });
     await prisma.aiConversation.update({ where: { id: convId }, data: { model } });
+
     return res.json({ conversationId: convId, message: saved, usage: await usage(userId) });
-  } catch {
-    return res.status(502).json({
-      error: "A30 IA est indisponible pour le moment",
-      conversationId: convId,
-    });
+  } catch (err: any) {
+    console.error("Erreur sendMessage:", err?.message);
+    return res.status(500).json({ error: "Erreur serveur" });
   }
 }
