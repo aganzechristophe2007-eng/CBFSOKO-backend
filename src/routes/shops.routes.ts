@@ -15,6 +15,21 @@ export function createShopsRouter({ prisma }: { prisma: PrismaClient }): Router 
     })
   );
 
+  // Nombre de boutiques créées depuis une date (badge « nouvelles boutiques » sur l'onglet Boutiques).
+  router.get('/new-count', async (req: Request, res: Response) => {
+    try {
+      const since = new Date(String(req.query.since || ''));
+      if (Number.isNaN(since.getTime())) return res.status(400).json({ success: false, error: 'Date invalide.' });
+      const floor = Date.now() - 30 * 24 * 3600 * 1000; // jamais plus de 30 jours en arrière
+      const from = new Date(Math.max(since.getTime(), floor));
+      const count = await prisma.shop.count({ where: { createdAt: { gt: from } } });
+      return res.status(200).json({ success: true, count });
+    } catch (error) {
+      console.error('Erreur /api/shops/new-count :', error);
+      return res.status(500).json({ success: false, error: 'Erreur serveur.' });
+    }
+  });
+
   router.get('/', async (req: Request, res: Response) => {
     try {
       const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 80) : '';
@@ -63,6 +78,7 @@ export function createShopsRouter({ prisma }: { prisma: PrismaClient }): Router 
         description: s.description,
         logo: s.logo,
         verified: s.verified,
+        createdAt: s.createdAt,
         ownerId: s.ownerId,
         productsCount: countByOwner.get(s.ownerId) ?? 0,
         category: categoryName.get(topCategoryByOwner.get(s.ownerId)?.categoryId ?? '') ?? null,

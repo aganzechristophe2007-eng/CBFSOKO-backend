@@ -1,3 +1,6 @@
+-- Notifications enrichies (type, lien interne, anti-doublon) + abonnements Web Push.
+-- Migration additive : aucune donnée existante n'est supprimée ni modifiée.
+
 ALTER TABLE "Notification" ADD COLUMN "type" TEXT NOT NULL DEFAULT 'SYSTEM';
 ALTER TABLE "Notification" ADD COLUMN "link" TEXT;
 ALTER TABLE "Notification" ADD COLUMN "dedupeKey" TEXT;
