@@ -8,40 +8,40 @@ datasource db {
 }
 
 model User {
-  id                    String             @id @default(cuid())
-  name                  String
-  callsMade             Call[]             @relation("CallsMade")
-  callsReceived         Call[]             @relation("CallsReceived")
-  email                 String             @unique
-  password              String
-  phone                 String?
-  avatar                String?
-  role                  Role               @default(USER)
-  createdAt             DateTime           @default(now())
-  updatedAt             DateTime           @updatedAt
-  cartItems             CartItem[]
-  favorites             Favorite[]
-  feedbacks             Feedback[]
-  following             Follow[]           @relation("Followers")
-  followers             Follow[]           @relation("Following")
-  receivedMessages      Message[]          @relation("ReceivedMessages")
-  sentMessages          Message[]          @relation("SentMessages")
-  notifications         Notification[]
-  orders                Order[]            @relation("BuyerOrders")
-  ordersAsSeller        Order[]            @relation("SellerOrders")
-  ordersAsCourier       Order[]            @relation("CourierOrders")
-  products              Product[]          @relation("SellerProducts")
-  reels                 Reel[]
-  reelComments          ReelComment[]
-  sellerReviewsReceived SellerReview[]     @relation("SellerReviewsReceived")
-  sellerReviewsGiven    SellerReview[]     @relation("SellerReviewsGiven")
-  shop                  Shop?
-  transactions          Transaction[]
-  wallet                Wallet?
-  payments              Payment[]
-  walletDeposits        WalletDeposit[]
-  walletWithdrawals     WalletWithdrawal[]
-  aiConversations       AiConversation[]
+  id               String         @id @default(cuid())
+  name             String
+  callsMade        Call[]         @relation("CallsMade")
+  callsReceived    Call[]         @relation("CallsReceived")
+  email            String         @unique
+  password         String
+  phone            String?
+  avatar           String?
+  role             Role           @default(USER)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  cartItems        CartItem[]
+  favorites        Favorite[]
+  feedbacks        Feedback[]
+  following        Follow[]       @relation("Followers")
+  followers        Follow[]       @relation("Following")
+  receivedMessages Message[]      @relation("ReceivedMessages")
+  sentMessages     Message[]      @relation("SentMessages")
+  notifications    Notification[]
+  pushSubscriptions PushSubscription[]
+  orders           Order[]        @relation("BuyerOrders")
+  ordersAsSeller   Order[]        @relation("SellerOrders")
+  ordersAsCourier  Order[]        @relation("CourierOrders")
+  products         Product[]      @relation("SellerProducts")
+  reels            Reel[]
+  reelComments     ReelComment[]
+  sellerReviewsReceived SellerReview[] @relation("SellerReviewsReceived")
+  sellerReviewsGiven    SellerReview[] @relation("SellerReviewsGiven")
+  shop             Shop?
+  transactions     Transaction[]
+  wallet           Wallet?
+  payments         Payment[]
+  walletDeposits   WalletDeposit[]
+  walletWithdrawals WalletWithdrawal[]
 
   @@index([email])
 }
@@ -79,31 +79,31 @@ model Category {
 }
 
 model Product {
-  id             String        @id @default(cuid())
+  id             String       @id @default(cuid())
   title          String
   description    String
-  priceUSD       Float         @default(0)
-  priceCDF       Float         @default(0)
-  quantity       Int           @default(1)
-  state          ProductState  @default(NEUF)
-  type           ProductType   @default(SALE)
-  images         String[]      @default([])
+  priceUSD       Float        @default(0)
+  priceCDF       Float        @default(0)
+  quantity       Int          @default(1)
+  state          ProductState @default(NEUF)
+  type           ProductType  @default(SALE)
+  images         String[]     @default([])
   videoUrl       String?
   qrCodeUrl      String?
   location       String?
-  isSold         Boolean       @default(false)
-  favoritesCount Int           @default(0)
-  viewsCount     Int           @default(0)
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  isSold         Boolean      @default(false)
+  favoritesCount Int          @default(0)
+  viewsCount     Int          @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
   categoryId     String
   sellerId       String
   weight         Float?
   cartItems      CartItem[]
   favorites      Favorite[]
   orderItems     OrderItem[]
-  category       Category      @relation(fields: [categoryId], references: [id])
-  seller         User          @relation("SellerProducts", fields: [sellerId], references: [id], onDelete: Cascade)
+  category       Category     @relation(fields: [categoryId], references: [id])
+  seller         User         @relation("SellerProducts", fields: [sellerId], references: [id], onDelete: Cascade)
   reel           Reel?
   reelViews      ReelView[]
   reelComments   ReelComment[]
@@ -139,30 +139,30 @@ model CartItem {
 }
 
 model Order {
-  id                 String        @id @default(cuid())
-  buyerId            String
-  sellerId           String? // renseigne pour les reservations rapides depuis un reel (1 seul produit/vendeur)
-  totalUSD           Float         @default(0)
-  totalCDF           Float         @default(0)
-  status             OrderStatus   @default(PENDING)
-  deliveryAddress    String?
-  expiresAt          DateTime? // fin du delai de 12h laisse au vendeur pour confirmer
-  confirmedAt        DateTime? // horodatage de la confirmation du vendeur (statut CONFIRMED)
+  id              String        @id @default(cuid())
+  buyerId         String
+  sellerId        String? // renseigne pour les reservations rapides depuis un reel (1 seul produit/vendeur)
+  totalUSD        Float         @default(0)
+  totalCDF        Float         @default(0)
+  status          OrderStatus   @default(PENDING)
+  deliveryAddress String?
+  expiresAt       DateTime? // fin du delai de 12h laisse au vendeur pour confirmer
+  confirmedAt     DateTime? // horodatage de la confirmation du vendeur (statut CONFIRMED)
   courierId          String? // livreur CBFSOKO assigne par un admin pour cette collecte
   courierAssignedAt  DateTime? // horodatage de l'assignation manuelle par un admin (avant verification)
   verifiedAt         DateTime? // horodatage du passage en COURIER_VERIFIED (verification effective)
   verificationNote   String? // remarque libre du livreur (etat, conformite)
-  verificationPhotos String[]      @default([]) // photos prises par le livreur a la recuperation
+  verificationPhotos String[] @default([]) // photos prises par le livreur a la recuperation
   paidAt             DateTime? // horodatage de la confirmation du paiement (verifie aupres de WonyaPay)
-  createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @updatedAt
-  buyer              User          @relation("BuyerOrders", fields: [buyerId], references: [id])
-  seller             User?         @relation("SellerOrders", fields: [sellerId], references: [id])
-  courier            User?         @relation("CourierOrders", fields: [courierId], references: [id])
-  items              OrderItem[]
-  review             SellerReview?
-  messages           Message[]
-  payments           Payment[]
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  buyer           User          @relation("BuyerOrders", fields: [buyerId], references: [id])
+  seller          User?         @relation("SellerOrders", fields: [sellerId], references: [id])
+  courier         User?         @relation("CourierOrders", fields: [courierId], references: [id])
+  items           OrderItem[]
+  review          SellerReview?
+  messages        Message[]
+  payments        Payment[]
 
   @@index([buyerId])
   @@index([sellerId])
@@ -239,16 +239,37 @@ model ReelComment {
   @@index([userId])
 }
 
+
 model Notification {
   id        String   @id @default(cuid())
   userId    String
+  type      String   @default("SYSTEM") // SYSTEM | ORDER | PRODUCT | COMMENT | MESSAGE | PAYMENT
   title     String
   message   String
+  link      String? // chemin interne du site (ex. /products/<id>), jamais une URL externe
+  dedupeKey String? // empeche de notifier deux fois le meme evenement pour le meme utilisateur
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, dedupeKey])
   @@index([userId, isRead])
+  @@index([userId, createdAt])
+}
+
+// Abonnement Web Push d'un appareil (un utilisateur peut avoir plusieurs appareils).
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model Message {
@@ -330,14 +351,14 @@ model Wallet {
 }
 
 model Transaction {
-  id             String            @id @default(cuid())
-  userId         String
-  type           TransactionType
-  amount         Float
-  currency       String            @default("USD")
-  status         TransactionStatus @default(PENDING)
-  reference      String?
-  createdAt      DateTime          @default(now())
+  id        String            @id @default(cuid())
+  userId    String
+  type      TransactionType
+  amount    Float
+  currency  String            @default("USD")
+  status    TransactionStatus @default(PENDING)
+  reference String?
+  createdAt DateTime          @default(now())
   user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   counterpartyId String? // autre utilisateur d'un transfert
   orderId        String? // commande payee depuis le portefeuille
@@ -486,31 +507,4 @@ model WalletWithdrawal {
 
   @@index([userId, createdAt])
   @@index([status, createdAt])
-}
-
-// ==========================================
-// A30 IA : conversations et messages
-// ==========================================
-model AiConversation {
-  id        String      @id @default(cuid())
-  userId    String
-  title     String      @default("Nouvelle conversation")
-  model     String
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
-  messages  AiMessage[]
-  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId, updatedAt])
-}
-
-model AiMessage {
-  id             String         @id @default(cuid())
-  conversationId String
-  role           String
-  content        String
-  createdAt      DateTime       @default(now())
-  conversation   AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-
-  @@index([conversationId, createdAt])
 }

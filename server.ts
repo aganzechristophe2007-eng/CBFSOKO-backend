@@ -29,13 +29,18 @@ import adminSellerRouter from './src/routes/admin-seller.routes';
 import { sweepExpiredOrders } from './src/controllers/orders.controller';
 import paymentsRouter from './src/routes/payments.routes';
 import wonyapayDiagnosticRouter from './src/routes/wonyapay.diagnostic.routes';
-import aiRouter from './src/routes/ai.routes';
 import { sweepPendingPayments } from './src/controllers/payments.controller';
 import walletRouter from './src/routes/wallet.routes';
 import { sweepWalletOperations } from './src/services/walletLedger.service';
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 import settingsAccountRouter from './src/routes/settings.account.routes';
+import { createNotificationService } from './src/services/notifications.service';
+import { createNotificationsRouter } from './src/routes/notifications.routes';
+import { createPushRouter } from './src/routes/push.routes';
+import { createFavoritesRouter } from './src/routes/favorites.routes';
+import { createShopsRouter } from './src/routes/shops.routes';
 const prisma = new PrismaClient();
+const notifier = createNotificationService(prisma); // notifications en base + push (si VAPID configuré)
 const app = express();
 
 // Render (comme tout hébergeur derrière un reverse proxy) ajoute l'en-tête X-Forwarded-For.
@@ -120,7 +125,6 @@ app.use('/api/payments', paymentsRouter);
 app.use('/api/wallet', walletRouter);
 app.use('/api/admin-seller', adminSellerRouter);
 app.use('/api/settings', settingsAccountRouter);
-app.use('/api/ai', aiRouter);
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -300,6 +304,14 @@ const getOptionalUserId = (req: Request): string | null => {
     return null;
   }
 };
+
+// ==========================================
+// NOTIFICATIONS, PUSH, FAVORIS, BOUTIQUES (montés ici : ils ont besoin de requireAuth)
+// ==========================================
+app.use('/api/notifications', createNotificationsRouter({ prisma, requireAuth, notifier }));
+app.use('/api/push', createPushRouter({ prisma, requireAuth, notifier }));
+app.use('/api/favorites', createFavoritesRouter({ prisma, requireAuth }));
+app.use('/api/shops', createShopsRouter({ prisma }));
 
 // ==========================================
 // 0. CATÉGORIES
@@ -577,7 +589,26 @@ app.get('/api/products/:id', async (req: Request, res: Response) => {
       },
     });
     if (!product) return res.status(404).json({ success: false, error: 'Produit introuvable.' });
-    return res.status(200).json({ success: true, data: product });
+
+    // Note moyenne du vendeur + produits similaires (même catégorie) pour la fiche détail.
+    const [ratingAgg, similar] = await Promise.all([
+      prisma.sellerReview.aggregate({ where: { sellerId: product.sellerId }, _avg: { rating: true }, _count: { rating: true } }),
+      prisma.product.findMany({
+        where: { categoryId: product.categoryId, id: { not: product.id }, isSold: false },
+        select: { id: true, title: true, priceUSD: true, priceCDF: true, images: true },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      }),
+    ]);
+    const { qrCodeUrl: _qr, ...publicProduct } = product; // le QR (image base64) alourdit inutilement la fiche
+    return res.status(200).json({
+      success: true,
+      data: {
+        ...publicProduct,
+        seller: { ...product.seller, ratingAvg: ratingAgg._avg.rating ?? 0, ratingCount: ratingAgg._count.rating },
+        similar,
+      },
+    });
   } catch (error) {
     console.error('Erreur /api/products/:id :', error);
     return res.status(500).json({ success: false, error: 'Erreur serveur.' });
@@ -1498,6 +1529,17 @@ app.post('/api/products', requireAuth, productUploadFields, async (req: AuthRequ
     });
 
     clearProductsCache(); // le nouvel article doit apparaître tout de suite sur l'accueil
+
+    // Prévient les abonnés du vendeur (sans bloquer la réponse : un échec n'empêche jamais la publication).
+    notifier
+      .notifyFollowersOfNewProduct({
+        sellerId,
+        sellerName: newProduct.seller.name,
+        productId: newProduct.id,
+        title: newProduct.title,
+        isRequest: newProduct.type === 'REQUEST',
+      })
+      .catch((err) => console.error('Erreur notifications nouveau produit :', err));
     return res.status(201).json({ success: true, message: 'Article publié avec succès.', product: newProduct });
   } catch (error) {
     console.error('Erreur /api/products (POST) :', error);
@@ -1545,6 +1587,12 @@ setInterval(() => {
 setInterval(() => {
   sweepWalletOperations().catch((err) => console.error('Erreur sweepWalletOperations:', err));
 }, 30 * 1000);
+
+// 🔔 Notifications de changement de statut des commandes : rattrapage régulier, sans doublon
+// (chaque couple commande/statut/destinataire n'est notifié qu'une fois grâce à dedupeKey).
+setInterval(() => {
+  notifier.sweepOrderNotifications().catch((err) => console.error('Erreur sweepOrderNotifications:', err));
+}, 60 * 1000);
 
 // 🔌 Un seul serveur HTTP pour Express ET Socket.io : sans ça, /socket.io/
 // n'existe nulle part et toute tentative de connexion échoue en 404.
